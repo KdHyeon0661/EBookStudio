@@ -1,0 +1,34 @@
+# =========================
+# Visual Studio / .NET
+# =========================
+.vs/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.userprefs
+*.log
+
+# Rider / JetBrains / ReSharper
+.idea/
+*.sln.iml
+_ReSharper*/
+*.[Rr]e[Ss]harper
+*.DotSettings.user
+
+# NuGet / build artifacts
+packages/
+*.nupkg
+artifacts/
+project.lock.json
+project.fragment.lock.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# =========================
+# App runtime cache (DO NOT COMMIT)
+# =========================
+**/DownloadCache/

@@ -1,0 +1,238 @@
+﻿<UserControl x:Class="EBookStudio.Views.NoteView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:EBookStudio.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" 
+             d:DesignHeight="700" d:DesignWidth="400">
+
+    <UserControl.Resources>
+        <Style x:Key="TabRadioButtonStyle" TargetType="RadioButton">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="RadioButton">
+                        <Grid Background="White" Cursor="Hand" Height="50">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="3"/>
+                            </Grid.RowDefinitions>
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" TextElement.FontSize="15"/>
+                            <Rectangle x:Name="Ind" Grid.Row="1" Fill="Transparent"/>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="Ind" Property="Fill" Value="#007AFF"/>
+                                <Setter Property="Foreground" Value="#007AFF"/>
+                                <Setter Property="FontWeight" Value="Bold"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="False">
+                                <Setter Property="Foreground" Value="#666"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="DeleteBtnStyle" TargetType="Button">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Foreground" Value="#999"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Padding" Value="5"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}">
+                            <TextBlock Text="🗑" FontSize="16" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Foreground" Value="#FF4444"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CleanListBoxItem" TargetType="ListBoxItem">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBoxItem">
+                        <ContentPresenter/>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid Background="#F5F5F7">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="60"/>
+            <RowDefinition Height="50"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="White" BorderBrush="#E5E5E5" BorderThickness="0,0,0,1">
+            <Grid Margin="20,0">
+                <Button Command="{Binding GoBackCommand}" 
+                        HorizontalAlignment="Left" VerticalAlignment="Center"
+                        Background="Transparent" BorderThickness="0" Cursor="Hand">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="&#xE72B;" FontFamily="Segoe MDL2 Assets" FontSize="16" VerticalAlignment="Center" Foreground="#333"/>
+                        <TextBlock Text=" 뒤로 가기" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="#333" Margin="5,0,0,0"/>
+                    </StackPanel>
+                </Button>
+                <TextBlock Text="독서 노트" FontSize="18" FontWeight="Bold" Foreground="#333"
+                           HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1" Background="White">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <RadioButton Grid.Column="0" Content="책갈피" GroupName="NoteTabs" Style="{StaticResource TabRadioButtonStyle}" IsChecked="True"
+                         Command="{Binding SwitchTabCommand}" CommandParameter="0"/>
+            <RadioButton Grid.Column="1" Content="하이라이트" GroupName="NoteTabs" Style="{StaticResource TabRadioButtonStyle}"
+                         Command="{Binding SwitchTabCommand}" CommandParameter="1"/>
+            <RadioButton Grid.Column="2" Content="메모" GroupName="NoteTabs" Style="{StaticResource TabRadioButtonStyle}"
+                         Command="{Binding SwitchTabCommand}" CommandParameter="2"/>
+        </Grid>
+
+        <TabControl Grid.Row="2" BorderThickness="0" Background="Transparent" Padding="0"
+                    SelectedIndex="{Binding SelectedTabIndex}">
+            <TabControl.ItemContainerStyle>
+                <Style TargetType="TabItem">
+                    <Setter Property="Visibility" Value="Collapsed"/>
+                </Style>
+            </TabControl.ItemContainerStyle>
+
+            <TabItem>
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding BookmarkCount}" Foreground="#888" Margin="0,0,0,15"/>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Bookmarks}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource CleanListBoxItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="White" CornerRadius="10" Margin="0,0,0,10" Padding="15">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Left" Cursor="Hand"
+                                                Command="{Binding DataContext.GoToPageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding DateString}" Foreground="#AAA" FontSize="12" Margin="0,0,0,5"/>
+                                                <TextBlock Text="{Binding Content}" FontSize="15" FontWeight="Medium" Foreground="#333" TextTrimming="CharacterEllipsis"/>
+                                                <TextBlock Text="{Binding PageNumber, StringFormat='p. {0}'}" Foreground="#007AFF" Margin="0,5,0,0" FontWeight="Bold"/>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Grid.Column="1" Style="{StaticResource DeleteBtnStyle}" VerticalAlignment="Top"
+                                                Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem>
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding HighlightCount}" Foreground="#888" Margin="0,0,0,15"/>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Highlights}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource CleanListBoxItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="White" CornerRadius="10" Margin="0,0,0,10" Padding="15">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Border Grid.Column="0" Width="4" CornerRadius="2" Background="{Binding Color}" Margin="0,2,15,2"/>
+                                        <Button Grid.Column="1" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Left" Cursor="Hand"
+                                                Command="{Binding DataContext.GoToPageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}">
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Content}" FontSize="15" Foreground="#333" TextWrapping="Wrap" LineHeight="22" MaxHeight="66" TextTrimming="CharacterEllipsis"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                                    <TextBlock Text="{Binding PageNumber, StringFormat='p. {0}'}" Foreground="#007AFF" FontWeight="Bold" FontSize="12"/>
+                                                    <TextBlock Text=" | " Foreground="#DDD" Margin="5,0"/>
+                                                    <TextBlock Text="{Binding DateString}" Foreground="#AAA" FontSize="12"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Grid.Column="2" Style="{StaticResource DeleteBtnStyle}" VerticalAlignment="Top"
+                                                Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem>
+                <Grid Margin="20">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Text="{Binding MemoCount}" Foreground="#888" Margin="0,0,0,15"/>
+                    <ListBox Grid.Row="1" ItemsSource="{Binding Memos}" Background="Transparent" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" ItemContainerStyle="{StaticResource CleanListBoxItem}">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <Border Background="White" CornerRadius="10" Margin="0,0,0,10" Padding="15">
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <Button Grid.Column="0" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Left" Cursor="Hand"
+                                                Command="{Binding DataContext.GoToPageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}">
+                                            <StackPanel>
+                                                <Border Background="#F9F9F9" Padding="10" CornerRadius="6" Margin="0,0,0,10" BorderBrush="#EEE" BorderThickness="1">
+                                                    <Grid>
+                                                        <Grid.ColumnDefinitions>
+                                                            <ColumnDefinition Width="3"/>
+                                                            <ColumnDefinition Width="*"/>
+                                                        </Grid.ColumnDefinitions>
+                                                        <Rectangle Fill="#CCC" RadiusX="1.5" RadiusY="1.5"/>
+                                                        <TextBlock Grid.Column="1" Text="{Binding OriginalText}" Foreground="#777" FontStyle="Italic" TextTrimming="CharacterEllipsis" Margin="10,0,0,0"/>
+                                                    </Grid>
+                                                </Border>
+                                                <TextBlock Text="{Binding Content}" FontSize="15" FontWeight="SemiBold" Foreground="#333" TextWrapping="Wrap" Margin="0,0,0,5"/>
+                                                <StackPanel Orientation="Horizontal" Margin="0,5,0,0">
+                                                    <TextBlock Text="{Binding PageNumber, StringFormat='p. {0}'}" Foreground="#007AFF" FontWeight="Bold" FontSize="12"/>
+                                                    <TextBlock Text=" | " Foreground="#DDD" Margin="5,0"/>
+                                                    <TextBlock Text="{Binding DateString}" Foreground="#AAA" FontSize="12"/>
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </Button>
+                                        <Button Grid.Column="1" Style="{StaticResource DeleteBtnStyle}" VerticalAlignment="Top"
+                                                Command="{Binding DataContext.DeleteItemCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}"/>
+                                    </Grid>
+                                </Border>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+    </Grid>
+</UserControl>

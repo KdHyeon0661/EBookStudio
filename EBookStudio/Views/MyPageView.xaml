@@ -1,0 +1,420 @@
+﻿<UserControl x:Class="EBookStudio.Views.MyPageView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:helpers="clr-namespace:EBookStudio.Helpers"
+             mc:Ignorable="d"
+             d:DesignHeight="1200" d:DesignWidth="1200">
+
+    <UserControl.Resources>
+        <helpers:BoolToColorConverter x:Key="BoolToColorConverter"/>
+        <helpers:BoolToOffsetConverter x:Key="BoolToOffsetConverter"/>
+        <helpers:PasswordMultiConverter x:Key="PasswordMultiConverter"/>
+
+        <Style x:Key="SectionHeaderStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="18"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Margin" Value="0,0,0,15"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="False">
+                    <Setter Property="Foreground" Value="#333"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="True">
+                    <Setter Property="Foreground" Value="#EEE"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="CardStyle" TargetType="Border">
+            <Setter Property="CornerRadius" Value="12"/>
+            <Setter Property="Padding" Value="25"/>
+            <Setter Property="Margin" Value="0,0,0,30"/>
+            <Setter Property="Effect">
+                <Setter.Value>
+                    <DropShadowEffect BlurRadius="15" ShadowDepth="2" Opacity="0.05" Color="Black"/>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="False">
+                    <Setter Property="Background" Value="White"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="True">
+                    <Setter Property="Background" Value="#1E1E1E"/>
+                    <Setter Property="BorderBrush" Value="#333"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="NormalTextStyle" TargetType="TextBlock">
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="False">
+                    <Setter Property="Foreground" Value="#333"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="True">
+                    <Setter Property="Foreground" Value="#DDD"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style x:Key="DescTextStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Margin" Value="0,4,0,0"/>
+            <Style.Triggers>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="False">
+                    <Setter Property="Foreground" Value="#888"/>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDarkMode}" Value="True">
+                    <Setter Property="Foreground" Value="#AAA"/>
+                </DataTrigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="Expander">
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+        </Style>
+    </UserControl.Resources>
+
+    <Grid>
+        <Grid.Style>
+            <Style TargetType="Grid">
+                <Style.Triggers>
+                    <DataTrigger Binding="{Binding IsDarkMode}" Value="False">
+                        <Setter Property="Background" Value="#F4F5F7"/>
+                    </DataTrigger>
+                    <DataTrigger Binding="{Binding IsDarkMode}" Value="True">
+                        <Setter Property="Background" Value="#121212"/>
+                    </DataTrigger>
+                </Style.Triggers>
+            </Style>
+        </Grid.Style>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="40">
+            <StackPanel HorizontalAlignment="Stretch">
+
+                <TextBlock Text="마이 페이지" FontSize="28" FontWeight="Bold" Margin="0,0,0,30" Style="{StaticResource NormalTextStyle}"/>
+
+                <TextBlock Text="기본 설정" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <Grid Margin="0,0,0,25">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Ellipse Width="64" Height="64" Fill="#007AFF"/>
+                            <TextBlock Text="{Binding Username}" Grid.Column="1" VerticalAlignment="Center" Margin="20,0,0,0" FontSize="22" FontWeight="Bold" Style="{StaticResource NormalTextStyle}"/>
+                        </Grid>
+
+                        <Separator Background="#EEE" Margin="0,10,0,20" Opacity="0.3"/>
+
+                        <Grid>
+                            <StackPanel>
+                                <TextBlock Text="다크 모드" FontWeight="SemiBold" FontSize="16" Style="{StaticResource NormalTextStyle}"/>
+                                <TextBlock Text="어두운 테마를 적용하여 눈의 피로를 줄입니다." Style="{StaticResource DescTextStyle}"/>
+                            </StackPanel>
+                            <ToggleButton IsChecked="{Binding IsDarkMode}" HorizontalAlignment="Right" VerticalAlignment="Center" Cursor="Hand" Width="50" Height="28">
+                                <ToggleButton.Template>
+                                    <ControlTemplate TargetType="ToggleButton">
+                                        <Border CornerRadius="14" Background="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BoolToColorConverter}}">
+                                            <Ellipse Width="24" Height="24" Fill="White" Margin="2" HorizontalAlignment="Left">
+                                                <Ellipse.RenderTransform>
+                                                    <TranslateTransform X="{Binding IsChecked, RelativeSource={RelativeSource TemplatedParent}, Converter={StaticResource BoolToOffsetConverter}}"/>
+                                                </Ellipse.RenderTransform>
+                                            </Ellipse>
+                                        </Border>
+                                    </ControlTemplate>
+                                </ToggleButton.Template>
+                            </ToggleButton>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="보안" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="새 비밀번호" FontWeight="SemiBold" Margin="0,0,0,8" Style="{StaticResource NormalTextStyle}"/>
+                        <PasswordBox x:Name="NewPwBox" Height="40" Padding="10" Margin="0,0,0,20" BorderBrush="#DDD" BorderThickness="1"/>
+
+                        <TextBlock Text="비밀번호 확인" FontWeight="SemiBold" Margin="0,0,0,8" Style="{StaticResource NormalTextStyle}"/>
+                        <PasswordBox x:Name="ConfirmPwBox" Height="40" Padding="10" Margin="0,0,0,20" BorderBrush="#DDD" BorderThickness="1"/>
+
+                        <Button Command="{Binding ChangePasswordCommand}" Content="비밀번호 변경"
+                                HorizontalAlignment="Right" Width="140" Height="40"
+                                Background="#007AFF" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Bold">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="8"/>
+                                </Style>
+                            </Button.Resources>
+                            <Button.CommandParameter>
+                                <MultiBinding Converter="{StaticResource PasswordMultiConverter}">
+                                    <Binding ElementName="NewPwBox"/>
+                                    <Binding ElementName="ConfirmPwBox"/>
+                                </MultiBinding>
+                            </Button.CommandParameter>
+                        </Button>
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="데이터 관리" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+
+                        <!-- [수정] 2컬럼 Grid로 분리해서 버튼이 카드 오른쪽 끝에 붙게 -->
+                        <Grid Margin="0,0,0,20" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,15,0">
+                                <TextBlock Text="독서 기록 초기화" FontWeight="SemiBold" FontSize="16" Style="{StaticResource NormalTextStyle}"/>
+                                <TextBlock Text="읽던 페이지 정보가 모두 1페이지로 초기화됩니다." Style="{StaticResource DescTextStyle}"/>
+                            </StackPanel>
+
+                            <Button Grid.Column="1"
+                                    Command="{Binding ResetHistoryCommand}" Content="초기화"
+                                    HorizontalAlignment="Right" Padding="15,8" Background="White"
+                                    BorderBrush="#FF9800" BorderThickness="1" Foreground="#FF9800" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border">
+                                        <Setter Property="CornerRadius" Value="6"/>
+                                    </Style>
+                                </Button.Resources>
+                            </Button>
+                        </Grid>
+
+                        <Separator Background="#EEE" Margin="0,0,0,20" Opacity="0.5"/>
+
+                        <!-- [수정] 2컬럼 Grid로 분리해서 버튼이 카드 오른쪽 끝에 붙게 -->
+                        <Grid Margin="0,0,0,20" HorizontalAlignment="Stretch">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Margin="0,0,15,0">
+                                <TextBlock Text="보관함 전체 비우기 (로컬)" FontWeight="SemiBold" FontSize="16" Foreground="#D32F2F"/>
+                                <TextBlock Text="내 컴퓨터에 저장된 책 파일만 삭제됩니다." Style="{StaticResource DescTextStyle}"/>
+                            </StackPanel>
+
+                            <Button Grid.Column="1"
+                                    Command="{Binding ResetUserDataCommand}" Content="모두 삭제"
+                                    HorizontalAlignment="Right" Padding="15,8" Background="White"
+                                    BorderBrush="#D32F2F" BorderThickness="1" Foreground="#D32F2F" Cursor="Hand">
+                                <Button.Resources>
+                                    <Style TargetType="Border">
+                                        <Setter Property="CornerRadius" Value="6"/>
+                                    </Style>
+                                </Button.Resources>
+                            </Button>
+                        </Grid>
+
+                        <Separator Background="#EEE" Margin="0,0,0,20"/>
+
+                        <Grid Margin="0,0,0,20">
+                            <Expander IsExpanded="False" HorizontalAlignment="Stretch">
+                                <Expander.Header>
+                                    <!-- [수정] 헤더를 2컬럼으로 분리 + Expander 폭을 따라가게 -->
+                                    <Grid HorizontalAlignment="Stretch"
+                                          Width="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=ActualWidth}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="5,0,0,0">
+                                            <TextBlock Text="서버 저장소 관리 (삭제)" FontWeight="SemiBold" FontSize="16" Style="{StaticResource NormalTextStyle}"/>
+                                            <TextBlock Text="서버에서 영구 삭제 (음악 제외)" FontSize="12" Foreground="#999" Margin="0,2,0,0"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,35,0">
+                                            <Button Content="목록 갱신" Command="{Binding LoadServerDataCommand}"
+                                                    Margin="0,0,10,0" Padding="15,8" FontSize="12" Cursor="Hand"
+                                                    Background="White" BorderBrush="#AAA" BorderThickness="1" Foreground="#555">
+                                                <Button.Resources>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="CornerRadius" Value="6"/>
+                                                    </Style>
+                                                </Button.Resources>
+                                            </Button>
+
+                                            <Button Content="선택 삭제" Command="{Binding DeleteServerBooksCommand}"
+                                                    Padding="15,8" FontSize="12" Cursor="Hand"
+                                                    Background="White" BorderBrush="#D32F2F" BorderThickness="1" Foreground="#D32F2F">
+                                                <Button.Resources>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="CornerRadius" Value="6"/>
+                                                    </Style>
+                                                </Button.Resources>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Expander.Header>
+
+                                <StackPanel Margin="0,15,0,0">
+                                    <Border BorderBrush="#EEE" BorderThickness="1" CornerRadius="6" Height="250">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                                            <ItemsControl ItemsSource="{Binding ServerDeleteList}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="#F8F8F8" BorderThickness="0,0,0,1" Padding="10">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="40"/>
+                                                                    <ColumnDefinition Width="60"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="40"/>
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                                    <CheckBox.LayoutTransform>
+                                                                        <ScaleTransform ScaleX="1.2" ScaleY="1.2"/>
+                                                                    </CheckBox.LayoutTransform>
+                                                                </CheckBox>
+
+                                                                <Image Grid.Column="1" Source="{Binding DisplayCoverUrl}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
+                                                                <TextBlock Grid.Column="2" Text="{Binding Title}" VerticalAlignment="Center" FontWeight="SemiBold"/>
+
+                                                                <Button Grid.Column="3" Content="✕"
+                                                                        Command="{Binding DataContext.DeleteSingleServerBookCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                                        CommandParameter="{Binding}"
+                                                                        Width="26" Height="26" Background="#FFEBEE" Foreground="#D32F2F"
+                                                                        BorderThickness="0" FontSize="12" FontWeight="Bold" Cursor="Hand">
+                                                                    <Button.Resources>
+                                                                        <Style TargetType="Border">
+                                                                            <Setter Property="CornerRadius" Value="4"/>
+                                                                        </Style>
+                                                                    </Button.Resources>
+                                                                </Button>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Border>
+                                </StackPanel>
+                            </Expander>
+                        </Grid>
+
+                        <Separator Background="#EEE" Margin="0,10,0,10" Opacity="0.5"/>
+
+                        <Grid Margin="0,0,0,10">
+                            <Expander IsExpanded="False" HorizontalAlignment="Stretch">
+                                <Expander.Header>
+                                    <!-- [수정] 헤더를 2컬럼으로 분리 + Expander 폭을 따라가게 -->
+                                    <Grid HorizontalAlignment="Stretch"
+                                          Width="{Binding RelativeSource={RelativeSource AncestorType=Expander}, Path=ActualWidth}">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <StackPanel Grid.Column="0" VerticalAlignment="Center" Margin="5,0,0,0">
+                                            <TextBlock Text="서버에서 불러오기 (다운로드)" FontWeight="SemiBold" FontSize="16" Style="{StaticResource NormalTextStyle}"/>
+                                            <TextBlock Text="서버의 책을 내 PC로 가져오기" FontSize="12" Foreground="#999" Margin="0,2,0,0"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="1" Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,35,0">
+                                            <Button Content="목록 갱신" Command="{Binding LoadServerDataCommand}"
+                                                    Margin="0,0,10,0" Padding="15,8" FontSize="12" Cursor="Hand"
+                                                    Background="White" BorderBrush="#AAA" BorderThickness="1" Foreground="#555">
+                                                <Button.Resources>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="CornerRadius" Value="6"/>
+                                                    </Style>
+                                                </Button.Resources>
+                                            </Button>
+
+                                            <Button Content="선택 다운로드" Command="{Binding DownloadServerBooksCommand}"
+                                                    Padding="15,8" FontSize="12" Cursor="Hand"
+                                                    Background="White" BorderBrush="#4CAF50" BorderThickness="1" Foreground="#4CAF50">
+                                                <Button.Resources>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="CornerRadius" Value="6"/>
+                                                    </Style>
+                                                </Button.Resources>
+                                            </Button>
+                                        </StackPanel>
+                                    </Grid>
+                                </Expander.Header>
+
+                                <StackPanel Margin="0,15,0,0">
+                                    <Border BorderBrush="#EEE" BorderThickness="1" CornerRadius="6" Height="250">
+                                        <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+                                            <ItemsControl ItemsSource="{Binding ServerDownloadList}">
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Border BorderBrush="#F8F8F8" BorderThickness="0,0,0,1" Padding="10">
+                                                            <Grid>
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="40"/>
+                                                                    <ColumnDefinition Width="60"/>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="40"/>
+                                                                </Grid.ColumnDefinitions>
+
+                                                                <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                                    <CheckBox.LayoutTransform>
+                                                                        <ScaleTransform ScaleX="1.2" ScaleY="1.2"/>
+                                                                    </CheckBox.LayoutTransform>
+                                                                </CheckBox>
+
+                                                                <Image Grid.Column="1" Source="{Binding DisplayCoverUrl}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
+                                                                <TextBlock Grid.Column="2" Text="{Binding Title}" VerticalAlignment="Center" FontWeight="SemiBold"/>
+
+                                                                <Button Grid.Column="3" Content="↓"
+                                                                        Command="{Binding DataContext.DownloadSingleServerBookCommand, RelativeSource={RelativeSource AncestorType=UserControl}}"
+                                                                        CommandParameter="{Binding}"
+                                                                        Width="26" Height="26" Background="#E3F2FD" Foreground="#1976D2"
+                                                                        BorderThickness="0" FontSize="14" FontWeight="Bold" Cursor="Hand">
+                                                                    <Button.Resources>
+                                                                        <Style TargetType="Border">
+                                                                            <Setter Property="CornerRadius" Value="4"/>
+                                                                        </Style>
+                                                                    </Button.Resources>
+                                                                </Button>
+                                                            </Grid>
+                                                        </Border>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                    </Border>
+                                </StackPanel>
+                            </Expander>
+                        </Grid>
+
+                    </StackPanel>
+                </Border>
+
+                <TextBlock Text="계정" Style="{StaticResource SectionHeaderStyle}"/>
+                <Border Style="{StaticResource CardStyle}" Background="#FFF5F5" BorderBrush="#FFEBEE" BorderThickness="1">
+                    <Grid>
+                        <StackPanel>
+                            <TextBlock Text="회원 탈퇴" FontWeight="Bold" FontSize="16" Foreground="#D32F2F"/>
+                            <TextBlock Text="계정과 모든 데이터가 서버에서 삭제되며 복구할 수 없습니다." Foreground="#D32F2F" Opacity="0.8" FontSize="13" Margin="0,4,0,0"/>
+                        </StackPanel>
+                        <Button Command="{Binding DeleteAccountCommand}" Content="탈퇴하기"
+                                HorizontalAlignment="Right" Padding="15,8" Background="#D32F2F" Foreground="White" BorderThickness="0" Cursor="Hand" FontWeight="Bold">
+                            <Button.Resources>
+                                <Style TargetType="Border">
+                                    <Setter Property="CornerRadius" Value="6"/>
+                                </Style>
+                            </Button.Resources>
+                        </Button>
+                    </Grid>
+                </Border>
+
+                <StackPanel HorizontalAlignment="Center" Margin="0,30,0,50">
+                    <TextBlock Text="EBook Studio" FontWeight="Bold" Foreground="#AAA" HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding AppVersion}" Foreground="#CCC" FontSize="12" HorizontalAlignment="Center" Margin="0,5,0,0"/>
+                </StackPanel>
+
+            </StackPanel>
+        </ScrollViewer>
+    </Grid>
+</UserControl>
