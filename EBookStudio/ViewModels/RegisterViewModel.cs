@@ -59,10 +59,10 @@ namespace EBookStudio.ViewModels
         public RegisterViewModel(MainViewModel mainVM)
         {
             _mainVM = mainVM;
-            RegisterCommand = new RelayCommand(async (o) => await ExecuteRegister(o), CanRegister);
             BackCommand = new RelayCommand(o => _mainVM.NavigateToLogin());
-            SendCodeCommand = new RelayCommand(async (o) => await ExecuteSendCode());
-            VerifyCodeCommand = new RelayCommand(async (o) => await ExecuteVerifyCode());
+            RegisterCommand = new AsyncRelayCommand(async (o) => await ExecuteRegister(o), CanRegister);
+            SendCodeCommand = new AsyncRelayCommand(async (o) => await ExecuteSendCode());
+            VerifyCodeCommand = new AsyncRelayCommand(async (o) => await ExecuteVerifyCode());
         }
 
         // --- 인증 코드 발송 로직 (백엔드와 통신) ---

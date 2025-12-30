@@ -60,7 +60,7 @@ namespace EBookStudio.ViewModels
             DisplayBooks = new ObservableCollection<Book>();
             _allBooks = new List<Book>();
 
-            AddBookCommand = new RelayCommand(
+            AddBookCommand = new AsyncRelayCommand(
                 execute: async o => await UploadProcess(),
                 canExecute: o => _mainVM.IsNetworkAvailable
             );
@@ -176,8 +176,6 @@ namespace EBookStudio.ViewModels
 
                 await ScanLocalFolders(username);
                 RefreshList();
-
-                _ = Task.Run(async () => await SyncAllBooksInBackground(username));
             }
             catch (Exception ex)
             {
@@ -330,7 +328,6 @@ namespace EBookStudio.ViewModels
                     newBook.IsAvailable = true;
 
                     await SaveLibrary();
-                    _ = SyncAllBooksInBackground(username);
                 }
                 else
                 {
@@ -353,7 +350,7 @@ namespace EBookStudio.ViewModels
                     byte[] buffer = new byte[4];
                     using (FileStream fs = new FileStream(path, FileMode.Open, FileAccess.Read))
                     {
-                        fs.Read(buffer, 0, 4);
+                        fs.ReadExactly(buffer, 0, 4);
                     }
                     string header = System.Text.Encoding.ASCII.GetString(buffer);
                     return header == "%PDF";
@@ -430,55 +427,6 @@ namespace EBookStudio.ViewModels
                 }
             }
         }
-
-        public async Task SyncAllBooksInBackground(string username)
-        {
-            if (string.IsNullOrEmpty(username)) return;
-
-            await Task.Run(async () =>
-            {
-                string userDir = Path.Combine(FileHelper.UsersBasePath, username);
-                if (!Directory.Exists(userDir)) return;
-
-                string[] bookDirs = Directory.GetDirectories(userDir);
-
-                foreach (var bookDir in bookDirs)
-                {
-                    try
-                    {
-                        var dirInfo = new DirectoryInfo(bookDir);
-                        string bookTitle = dirInfo.Name;
-
-                        string jsonResponse = await ApiService.GetLatestBookJsonAsync(username, bookTitle);
-                        if (!string.IsNullOrEmpty(jsonResponse))
-                        {
-                            using (JsonDocument doc = JsonDocument.Parse(jsonResponse))
-                            {
-                                if (!doc.RootElement.TryGetProperty("book_data", out var bookData)) continue;
-
-                                string jsonFilename = $"{bookTitle}_full.json";
-                                if (doc.RootElement.TryGetProperty("json_filename", out var jsonNameProp))
-                                {
-                                    jsonFilename = jsonNameProp.GetString() ?? jsonFilename;
-                                }
-
-                                // [수정] category="" (루트)
-                                string localJsonPath = FileHelper.GetLocalFilePath(username, bookTitle, "", jsonFilename);
-                                string newJsonString = bookData.GetRawText();
-                                await File.WriteAllTextAsync(localJsonPath, newJsonString);
-                            }
-                        }
-
-                        await DownloadAllMusicFiles(username, bookTitle, bookTitle);
-                    }
-                    catch (Exception ex)
-                    {
-                        System.Diagnostics.Debug.WriteLine($"[AutoSync Error] {ex.Message}");
-                    }
-                }
-            });
-        }
-
         private bool IsSafeMusicFileName(string fileName)
         {
             if (string.IsNullOrWhiteSpace(fileName)) return false;

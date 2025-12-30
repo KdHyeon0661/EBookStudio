@@ -25,9 +25,9 @@ namespace EBookStudio.ViewModels
         public LoginViewModel(MainViewModel mainVM)
         {
             _mainVM = mainVM;
-            LoginCommand = new RelayCommand(async (o) => await ExecuteLogin(o));
-            GoRegisterCommand = new RelayCommand(o => _mainVM.NavigateToRegister());
 
+            LoginCommand = new AsyncRelayCommand(async (o) => await ExecuteLogin(o));
+            GoRegisterCommand = new RelayCommand(o => _mainVM.NavigateToRegister());
             FindAccountCommand = new RelayCommand(o => _mainVM.NavigateToFindAccount());
         }
 

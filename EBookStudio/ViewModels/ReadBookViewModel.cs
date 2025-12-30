@@ -294,56 +294,81 @@ namespace EBookStudio.ViewModels
         // ==============================================================
         private void UpdateMusicPlayback()
         {
+            // 1. 음악 기능이 꺼져있으면 정지
             if (!IsMusicEnabled)
             {
-                IsMusicPlaying = false;
+                if (IsMusicPlaying) IsMusicPlaying = false;
+                _mediaPlayer.Stop();
                 return;
             }
 
+            // 페이지 범위를 벗어남
             if (_pageToMusicMap.Count < CurrentPageNum) return;
-            string targetMusic = _pageToMusicMap[CurrentPageNum - 1]; // 예: "music/song.wav"
 
+            string targetMusic = _pageToMusicMap[CurrentPageNum - 1]; // 현재 페이지의 음악 파일명
+
+            // 2. 이 페이지에 음악이 없는 경우
             if (string.IsNullOrEmpty(targetMusic))
             {
-                IsMusicPlaying = false;
+                if (IsMusicPlaying) IsMusicPlaying = false; // Pause 처리
+                _mediaPlayer.Stop();
+                _mediaPlayer.Close();
                 _currentPlayingMusic = string.Empty;
                 return;
             }
 
-            // 곡 변경 감지
+            // 3. 곡이 바뀌어야 하는 경우 (핵심 수정)
             if (_currentPlayingMusic != targetMusic)
             {
                 string musicPath = "";
 
-                // [수정 포인트] JSON 경로가 "music/" 접두사를 가지면 공용 폴더에서 찾음
+                // 경로 찾기 로직 (공용 폴더 vs 로컬 폴더)
                 if (targetMusic.StartsWith("music/") || targetMusic.StartsWith("music\\"))
                 {
-                    string fileName = Path.GetFileName(targetMusic); // "song.wav" 추출
-                    // "music" 카테고리를 주어 DownloadCache/music/... 경로를 얻음
+                    string fileName = Path.GetFileName(targetMusic);
                     musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "music", fileName);
                 }
                 else
                 {
-                    // 예전 방식(호환성): 책 폴더 내부에 있을 경우
                     musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", targetMusic);
                 }
 
                 if (File.Exists(musicPath))
                 {
-                    _mediaPlayer.Open(new Uri(musicPath));
+                    // [중요 1] 기존 음악 확실히 정리
+                    _mediaPlayer.Stop();
+                    _mediaPlayer.Close();
+
+                    // [중요 2] 새 음악 로드
+                    _mediaPlayer.Open(new Uri(musicPath, UriKind.Absolute));
+
+                    // [핵심 해결책] Setter에 의존하지 말고 직접 Play() 호출!
+                    _mediaPlayer.Play();
+                    _timer.Start();
+
+                    // 상태 업데이트
                     _currentPlayingMusic = targetMusic;
-                    IsMusicPlaying = true; // 새 곡 재생
+
+                    // UI 바인딩을 위해 값만 맞춤 (이미 Play했으므로 Setter 로직 안 타도 됨)
+                    if (!_isMusicPlaying)
+                    {
+                        _isMusicPlaying = true;
+                        OnPropertyChanged(nameof(IsMusicPlaying));
+                    }
                 }
                 else
                 {
-                    // 파일이 없으면 정지 (혹은 다운로드 로직 추가 가능)
-                    // System.Diagnostics.Debug.WriteLine($"음악 파일 없음: {musicPath}");
+                    // 파일이 없으면 조용히 넘어감 (혹은 로그)
+                    // System.Diagnostics.Debug.WriteLine($"❌ 음악 파일 없음: {musicPath}");
                 }
             }
             else
             {
-                // 같은 곡이면 재생 상태 복구
-                if (!IsMusicPlaying) IsMusicPlaying = true;
+                // 4. 같은 곡인 경우: 만약 멈춰있다면 다시 재생
+                if (!IsMusicPlaying)
+                {
+                    IsMusicPlaying = true; // 이때는 Setter가 돌면서 Play() 해줌
+                }
             }
         }
 
@@ -446,7 +471,7 @@ namespace EBookStudio.ViewModels
                                                     {
                                                         _allPages.Add(sb.ToString());
                                                         _pageToChapterMap.Add(chapterIdx);
-                                                        _pageToMusicMap.Add(currentMusic); // 매핑
+                                                        _pageToMusicMap.Add(currentMusic);
 
                                                         globalPageCounter++;
                                                         sb.Clear();
@@ -459,7 +484,7 @@ namespace EBookStudio.ViewModels
                                     {
                                         _allPages.Add(sb.ToString());
                                         _pageToChapterMap.Add(chapterIdx);
-                                        _pageToMusicMap.Add(currentMusic); // 매핑
+                                        _pageToMusicMap.Add(currentMusic);
 
                                         globalPageCounter++;
                                     }

@@ -59,13 +59,13 @@ namespace EBookStudio.Models
 
         public class LoginResponse
         {
-            public string message { get; set; }
+            public string? message { get; set; }
 
             [JsonPropertyName("access_token")]
-            public string token { get; set; }
+            public string? token { get; set; }
 
             [JsonPropertyName("refresh_token")]
-            public string refresh_token { get; set; }
+            public string? refresh_token { get; set; }
         }
 
         public class UploadResult
@@ -167,12 +167,13 @@ namespace EBookStudio.Models
             catch { return null; }
         }
 
-        public static async Task<bool> ResetPasswordAsync(string email, string newPassword)
+        public static async Task<bool> ResetPasswordAsync(string email, string code, string newPassword)
         {
             try
             {
-                var response = await _client.PostAsJsonAsync($"{BaseUrl}/reset_password", new { email, new_password = newPassword });
-                return response.IsSuccessStatusCode;
+                var data = new { email, code, new_password = newPassword };
+                var res = await _client.PostAsJsonAsync($"{BaseUrl}/reset_password", data);
+                return res.IsSuccessStatusCode;
             }
             catch { return false; }
         }
@@ -204,7 +205,6 @@ namespace EBookStudio.Models
                         {
                             var result = await response.Content.ReadFromJsonAsync<UploadResponseDto>();
 
-                            // [수정] 서버가 파일명을 안 주면 book_title로 추측해서 채워넣기
                             string finalCover = result?.cover;
                             string finalText = result?.text;
 
@@ -322,24 +322,6 @@ namespace EBookStudio.Models
                 System.Diagnostics.Debug.WriteLine($"다운로드(Bytes) 실패: {url} -> {ex.Message}");
                 return null;
             }
-        }
-
-        public static async Task<string?> GetLatestBookJsonAsync(string username, string bookTitle)
-        {
-            try
-            {
-                var data = new { username, book_title = bookTitle };
-                var res = await _client.PostAsJsonAsync($"{BaseUrl}/sync_library", data);
-                if (res.IsSuccessStatusCode)
-                {
-                    return await res.Content.ReadAsStringAsync();
-                }
-            }
-            catch (Exception ex)
-            {
-                System.Diagnostics.Debug.WriteLine($"[Sync API Error] {ex.Message}");
-            }
-            return null;
         }
 
         public static async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)

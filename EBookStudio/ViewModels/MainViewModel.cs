@@ -126,9 +126,6 @@ namespace EBookStudio.ViewModels
 
                 // 서재 로드
                 _ = LibraryVM.LoadLibrary();
-
-                // 백그라운드 자동 동기화
-                _ = AutoSyncInBackground(lastUser);
             }
 
             // 4. 홈(서재)으로 시작
@@ -158,14 +155,6 @@ namespace EBookStudio.ViewModels
         // ==========================================
         // 5. 핵심 메서드
         // ==========================================
-
-        private async Task AutoSyncInBackground(string username)
-        {
-            if (!await NetworkHelper.CheckInternetConnectionAsync()) return;
-            System.Diagnostics.Debug.WriteLine($"[AutoSync] {username} 계정 동기화 시작...");
-            await LibraryVM.SyncAllBooksInBackground(username);
-        }
-
         private async Task CheckNetworkStatus()
         {
             bool isConnected = await NetworkHelper.CheckInternetConnectionAsync();
@@ -234,7 +223,6 @@ namespace EBookStudio.ViewModels
             FileHelper.SaveLastUser(username);
 
             _ = LibraryVM.LoadLibrary();
-            _ = AutoSyncInBackground(username);
 
             NavigateToHome();
         }

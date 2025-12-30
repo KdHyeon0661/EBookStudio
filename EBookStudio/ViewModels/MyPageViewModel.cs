@@ -62,21 +62,55 @@ namespace EBookStudio.ViewModels
         {
             Username = username;
 
+            // 1. 동기(Synchronous) 작업은 기존 RelayCommand 유지
+            // (만약 이것들도 내부에서 DB/파일 처리를 한다면 Async로 바꾸는 게 좋습니다)
             ChangePasswordCommand = new RelayCommand(ExecuteChangePassword);
             ResetHistoryCommand = new RelayCommand(ExecuteResetHistory);
-            ResetUserDataCommand = new RelayCommand(ExecuteResetUserData); // 이름 변경 연결
-            DeleteAccountCommand = new RelayCommand(ExecuteDeleteAccount);
+            ResetUserDataCommand = new RelayCommand(ExecuteResetUserData);
 
-            // [추가] 서버 커맨드 초기화
-            LoadServerDataCommand = new RelayCommand(async o => await LoadServerBooks());
+            // 2. [수정] 계정 삭제 (서버 통신이므로 Async 추천)
+            DeleteAccountCommand = new AsyncRelayCommand(async o => await ExecuteDeleteAccount());
 
-            DeleteServerBooksCommand = new RelayCommand(async o => await ExecuteDeleteServerBooks(ServerDeleteList.Where(x => x.IsSelected).ToList()));
-            DeleteSingleServerBookCommand = new RelayCommand(async o => await ExecuteDeleteServerBooks(new List<ServerBookItem> { (ServerBookItem)o }));
+            // 3. [수정] 서버 데이터 로드
+            LoadServerDataCommand = new AsyncRelayCommand(async o => await LoadServerBooks());
 
-            DownloadServerBooksCommand = new RelayCommand(async o => await ExecuteDownloadServerBooks(ServerDownloadList.Where(x => x.IsSelected).ToList()));
-            DownloadSingleServerBookCommand = new RelayCommand(async o => await ExecuteDownloadServerBooks(new List<ServerBookItem> { (ServerBookItem)o }));
+            // 4. [수정] 서버 책 삭제 (다중 선택)
+            DeleteServerBooksCommand = new AsyncRelayCommand(async o =>
+            {
+                var selectedItems = ServerDeleteList.Where(x => x.IsSelected).ToList();
+                if (selectedItems.Count > 0)
+                {
+                    await ExecuteDeleteServerBooks(selectedItems);
+                }
+            });
 
-            Task.Run(() => LoadServerBooks());
+            // 5. [수정] 서버 책 삭제 (단일 선택 - 버튼 클릭)
+            DeleteSingleServerBookCommand = new AsyncRelayCommand(async o =>
+            {
+                if (o is ServerBookItem item)
+                {
+                    await ExecuteDeleteServerBooks(new List<ServerBookItem> { item });
+                }
+            });
+
+            // 6. [수정] 서버 책 다운로드 (다중 선택)
+            DownloadServerBooksCommand = new AsyncRelayCommand(async o =>
+            {
+                var selectedItems = ServerDownloadList.Where(x => x.IsSelected).ToList();
+                if (selectedItems.Count > 0)
+                {
+                    await ExecuteDownloadServerBooks(selectedItems);
+                }
+            });
+
+            // 7. [수정] 서버 책 다운로드 (단일 선택)
+            DownloadSingleServerBookCommand = new AsyncRelayCommand(async o =>
+            {
+                if (o is ServerBookItem item)
+                {
+                    await ExecuteDownloadServerBooks(new List<ServerBookItem> { item });
+                }
+            });
         }
 
         private void ExecuteChangePassword(object? parameter)
@@ -130,7 +164,7 @@ namespace EBookStudio.ViewModels
             }
         }
 
-        private void ExecuteDeleteAccount(object? obj)
+        private async Task ExecuteDeleteAccount()
         {
             if (MessageBox.Show("정말로 탈퇴하시겠습니까?\n계정이 즉시 삭제됩니다.", "탈퇴", MessageBoxButton.YesNo, MessageBoxImage.Error) == MessageBoxResult.Yes)
             {
