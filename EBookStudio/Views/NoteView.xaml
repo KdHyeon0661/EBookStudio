@@ -164,7 +164,7 @@
                                             <ColumnDefinition Width="*"/>
                                             <ColumnDefinition Width="Auto"/>
                                         </Grid.ColumnDefinitions>
-                                        <Border Grid.Column="0" Width="4" CornerRadius="2" Background="{Binding Color}" Margin="0,2,15,2"/>
+                                        <Border Grid.Column="0" Width="4" CornerRadius="2" Background="{Binding Color, FallbackValue=Transparent}" Margin="0,2,15,2"/>
                                         <Button Grid.Column="1" Background="Transparent" BorderThickness="0" HorizontalContentAlignment="Left" Cursor="Hand"
                                                 Command="{Binding DataContext.GoToPageCommand, RelativeSource={RelativeSource AncestorType=UserControl}}" CommandParameter="{Binding}">
                                             <StackPanel>

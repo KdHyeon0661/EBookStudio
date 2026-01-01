@@ -1,13 +1,9 @@
 ﻿using EBookStudio.Helpers;
-using EBookStudio.Models; // Book, ApiService 등
-using System;
-using System.Collections.Generic;
+using EBookStudio.Models;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -15,48 +11,14 @@ using System.Windows.Threading;
 
 namespace EBookStudio.ViewModels
 {
-    public class LocalBookData
-    {
-        public LocalBookInfo? book_info { get; set; }
-        public List<LocalChapter>? chapters { get; set; }
-    }
-
-    public class LocalBookInfo
-    {
-        public string title { get; set; } = string.Empty;
-        public string author { get; set; } = string.Empty;
-        public int total_chapters { get; set; }
-    }
-
-    public class LocalChapter
-    {
-        public int chapter_index { get; set; }
-        public string title { get; set; } = string.Empty;
-        public List<LocalSegment>? segments { get; set; }
-    }
-
-    public class LocalSegment
-    {
-        public int segment_index { get; set; }
-        public string emotion { get; set; } = string.Empty;
-        public string music_filename { get; set; } = string.Empty;
-        public string music_path { get; set; } = string.Empty;
-        public List<LocalPage>? pages { get; set; }
-    }
-
-    public class LocalPage
-    {
-        public int page_index { get; set; }
-        public string text { get; set; } = string.Empty;
-        public bool is_new_segment { get; set; }
-    }
-
     public class ReadBookViewModel : ViewModelBase
     {
-        // ... (필드 변수들은 기존과 동일) ...
         private readonly MainViewModel _mainVM;
         private readonly Book _currentBook;
         private readonly string _username;
+
+        private readonly IBookFileSystem _fileSystem;
+        private readonly INoteService _noteService;
 
         public string CurrentUser => _username;
         public int TargetPage { get; set; } = 1;
@@ -114,7 +76,6 @@ namespace EBookStudio.ViewModels
             }
         }
 
-        // ... (Slider 관련 속성: CurrentPosition, TotalDuration 등 기존과 동일) ...
         private double _currentPosition;
         public double CurrentPosition
         {
@@ -192,7 +153,6 @@ namespace EBookStudio.ViewModels
 
         public string PageStatus => $"{CurrentPageNum} / {TotalPages}";
 
-        // ... (북마크, 메뉴, TOC 관련 속성 기존과 동일) ...
         private bool _isBookmarked;
         public bool IsBookmarked { get => _isBookmarked; set { _isBookmarked = value; OnPropertyChanged(); } }
 
@@ -228,7 +188,6 @@ namespace EBookStudio.ViewModels
             }
         }
 
-        // ... (ICommand 정의 및 생성자 기존과 동일) ...
         public ICommand NextPageCommand { get; }
         public ICommand PrevPageCommand { get; }
         public ICommand ToggleMenuCommand { get; }
@@ -239,11 +198,16 @@ namespace EBookStudio.ViewModels
         public ICommand OpenSettingCommand { get; }
         public ICommand ToggleBookmarkCommand { get; }
 
-        public ReadBookViewModel(MainViewModel mainVM, Book book)
+        // [수정] 생성자에 인터페이스 파라미터 추가 (변수명 그대로 유지)
+        public ReadBookViewModel(MainViewModel mainVM, Book book, IBookFileSystem? fileSystem = null, INoteService? noteService = null)
         {
             _mainVM = mainVM;
             _currentBook = book;
             _username = mainVM.LoggedInUser;
+
+            // [추가] 서비스 초기화
+            _fileSystem = fileSystem ?? new BookFileSystem();
+            _noteService = noteService ?? new NoteService();
 
             NextPageCommand = new RelayCommand(o => { if (CurrentPageNum < TotalPages) CurrentPageNum++; });
             PrevPageCommand = new RelayCommand(o => { if (CurrentPageNum > 1) CurrentPageNum--; });
@@ -260,12 +224,15 @@ namespace EBookStudio.ViewModels
             ToggleTocCommand = new RelayCommand(o => IsTocVisible = !IsTocVisible);
             OpenNoteCommand = new RelayCommand(o => { _mainVM.CurrentView = new NoteViewModel(_mainVM, _currentBook, CurrentPageNum); });
             OpenSettingCommand = new RelayCommand(o => { });
+
             ToggleBookmarkCommand = new RelayCommand(o =>
             {
                 IsBookmarked = !IsBookmarked;
                 var item = new NoteItem { Type = "Bookmark", PageNumber = CurrentPageNum, Content = $"p.{CurrentPageNum} - {DateTime.Now:yyyy.MM.dd}", CreatedAt = DateTime.Now };
-                if (IsBookmarked) NoteManager.AddItem(_username, _currentBook.Title, item);
-                else NoteManager.RemoveItem(_username, _currentBook.Title, item);
+
+                // [수정] NoteManager 직접 호출 대신 _noteService 사용
+                if (IsBookmarked) _noteService.AddItem(_username, _currentBook.Title, item);
+                else _noteService.RemoveItem(_username, _currentBook.Title, item);
             });
 
             _mediaPlayer.MediaEnded += (s, e) =>
@@ -289,12 +256,8 @@ namespace EBookStudio.ViewModels
             _ = LoadAllPagesAsync();
         }
 
-        // ==============================================================
-        // [핵심 수정] 음악 재생 경로 처리 (공용 폴더 대응)
-        // ==============================================================
         private void UpdateMusicPlayback()
         {
-            // 1. 음악 기능이 꺼져있으면 정지
             if (!IsMusicEnabled)
             {
                 if (IsMusicPlaying) IsMusicPlaying = false;
@@ -302,27 +265,23 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            // 페이지 범위를 벗어남
             if (_pageToMusicMap.Count < CurrentPageNum) return;
 
-            string targetMusic = _pageToMusicMap[CurrentPageNum - 1]; // 현재 페이지의 음악 파일명
+            string targetMusic = _pageToMusicMap[CurrentPageNum - 1];
 
-            // 2. 이 페이지에 음악이 없는 경우
             if (string.IsNullOrEmpty(targetMusic))
             {
-                if (IsMusicPlaying) IsMusicPlaying = false; // Pause 처리
+                if (IsMusicPlaying) IsMusicPlaying = false;
                 _mediaPlayer.Stop();
                 _mediaPlayer.Close();
                 _currentPlayingMusic = string.Empty;
                 return;
             }
 
-            // 3. 곡이 바뀌어야 하는 경우 (핵심 수정)
             if (_currentPlayingMusic != targetMusic)
             {
                 string musicPath = "";
 
-                // 경로 찾기 로직 (공용 폴더 vs 로컬 폴더)
                 if (targetMusic.StartsWith("music/") || targetMusic.StartsWith("music\\"))
                 {
                     string fileName = Path.GetFileName(targetMusic);
@@ -333,53 +292,49 @@ namespace EBookStudio.ViewModels
                     musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", targetMusic);
                 }
 
-                if (File.Exists(musicPath))
+                // [수정] File.Exists 대신 _fileSystem 사용
+                if (_fileSystem.FileExists(musicPath))
                 {
-                    // [중요 1] 기존 음악 확실히 정리
                     _mediaPlayer.Stop();
                     _mediaPlayer.Close();
 
-                    // [중요 2] 새 음악 로드
                     _mediaPlayer.Open(new Uri(musicPath, UriKind.Absolute));
 
-                    // [핵심 해결책] Setter에 의존하지 말고 직접 Play() 호출!
                     _mediaPlayer.Play();
                     _timer.Start();
 
-                    // 상태 업데이트
                     _currentPlayingMusic = targetMusic;
 
-                    // UI 바인딩을 위해 값만 맞춤 (이미 Play했으므로 Setter 로직 안 타도 됨)
                     if (!_isMusicPlaying)
                     {
                         _isMusicPlaying = true;
                         OnPropertyChanged(nameof(IsMusicPlaying));
                     }
                 }
-                else
-                {
-                    // 파일이 없으면 조용히 넘어감 (혹은 로그)
-                    // System.Diagnostics.Debug.WriteLine($"❌ 음악 파일 없음: {musicPath}");
-                }
             }
             else
             {
-                // 4. 같은 곡인 경우: 만약 멈춰있다면 다시 재생
                 if (!IsMusicPlaying)
                 {
-                    IsMusicPlaying = true; // 이때는 Setter가 돌면서 Play() 해줌
+                    IsMusicPlaying = true;
                 }
             }
         }
 
         public void CheckCurrentPageStatus()
         {
-            var noteData = NoteManager.LoadNotes(_username, _currentBook.Title);
+            // [수정] NoteManager 직접 호출 대신 _noteService 사용
+            var noteData = _noteService.LoadNotes(_username, _currentBook.Title);
             bool isSaved = noteData.Bookmarks.Any(x => x.PageNumber == CurrentPageNum);
             if (_isBookmarked != isSaved) { _isBookmarked = isSaved; OnPropertyChanged(nameof(IsBookmarked)); }
         }
 
-        public void SaveNoteData(NoteItem item) { item.PageNumber = CurrentPageNum; NoteManager.AddItem(_username, _currentBook.Title, item); }
+        public void SaveNoteData(NoteItem item)
+        {
+            item.PageNumber = CurrentPageNum;
+            // [수정] NoteManager 직접 호출 대신 _noteService 사용
+            _noteService.AddItem(_username, _currentBook.Title, item);
+        }
 
         private async Task LoadAllPagesAsync()
         {
@@ -402,20 +357,19 @@ namespace EBookStudio.ViewModels
                 string baseName = tempBaseName ?? _currentBook.Title ?? "UnknownBook";
                 string jsonFileName = baseName.EndsWith("_full") ? $"{baseName}.json" : $"{baseName}_full.json";
 
-                // ==========================================================
-                // [핵심 수정] JSON 로딩 경로 평탄화 (category: "" 사용)
-                // ==========================================================
-                // 기존: "texts" -> 수정: "" (책 폴더 루트에서 찾음)
                 string localPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", jsonFileName);
 
-                if (!File.Exists(localPath))
+                // [수정] File.Exists 대신 _fileSystem 사용
+                if (!_fileSystem.FileExists(localPath))
                 {
                     localPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", _currentBook.FileName);
                 }
 
-                if (File.Exists(localPath))
+                // [수정] File.Exists 대신 _fileSystem 사용
+                if (_fileSystem.FileExists(localPath))
                 {
-                    string json = await File.ReadAllTextAsync(localPath);
+                    // [수정] File.ReadAllTextAsync 대신 _fileSystem 사용
+                    string json = await _fileSystem.ReadAllTextAsync(localPath);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     var bookData = JsonSerializer.Deserialize<LocalBookData>(json, options);
 
@@ -443,7 +397,6 @@ namespace EBookStudio.ViewModels
                                     _allPages.Add(titlePage);
                                     _pageToChapterMap.Add(chapterIdx);
 
-                                    // 챕터 첫 페이지용 음악 (우선순위: music_path -> music_filename)
                                     string firstSegMusic = chapter.segments?.FirstOrDefault()?.music_path
                                         ?? chapter.segments?.FirstOrDefault()?.music_filename
                                         ?? string.Empty;
@@ -459,7 +412,6 @@ namespace EBookStudio.ViewModels
                                     {
                                         foreach (var seg in chapter.segments)
                                         {
-                                            // 세그먼트별 음악 (music_path 우선)
                                             currentMusic = seg.music_path ?? seg.music_filename ?? string.Empty;
 
                                             if (seg.pages != null)

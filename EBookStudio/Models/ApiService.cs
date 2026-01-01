@@ -41,8 +41,6 @@ namespace EBookStudio.Models
         public string? cover { get; set; }
         public string? author { get; set; }
         public List<string>? music_files { get; set; }
-
-        // [수정] 서버에서 새로 보내주는 필드 추가
         public string? book_title { get; set; }
         public string? job_id { get; set; }
     }

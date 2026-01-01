@@ -7,28 +7,33 @@ namespace EBookStudio.ViewModels
 {
     public class SettingViewModel : ViewModelBase
     {
-        public SettingsService Settings => SettingsService.Instance;
+        private readonly ISettingsService _settings;
+        public ISettingsService Settings => _settings;
 
-        // 사용 가능한 폰트 목록
         public ObservableCollection<FontFamily> FontList { get; } = new ObservableCollection<FontFamily>
         {
             new FontFamily("Malgun Gothic"),
-            new FontFamily("KoPubBatang"), // 코펍바탕
-            new FontFamily("KoPubDotum"),  // 코펍돋움
+            new FontFamily("KoPubBatang"),
+            new FontFamily("KoPubDotum"),
             new FontFamily("Segoe UI"),
             new FontFamily("Gulim")
         };
 
         public ICommand SetThemeCommand { get; }
 
-        public SettingViewModel()
+        public SettingViewModel(ISettingsService? settings = null)
         {
+            // SettingsService가 ISettingsService를 상속받았으므로 이제 안전하게 캐스팅됩니다.
+            _settings = settings ?? (ISettingsService)SettingsService.Instance;
+
             SetThemeCommand = new RelayCommand(o =>
             {
-                string theme = o as string;
-                if (theme == "Light") Settings.ApplyLightMode();
-                else if (theme == "Sepia") Settings.ApplySepiaMode();
-                else if (theme == "Dark") Settings.ApplyDarkMode();
+                if (o is string theme)
+                {
+                    if (theme == "Light") _settings.ApplyLightMode();
+                    else if (theme == "Sepia") _settings.ApplySepiaMode();
+                    else if (theme == "Dark") _settings.ApplyDarkMode();
+                }
             });
         }
     }

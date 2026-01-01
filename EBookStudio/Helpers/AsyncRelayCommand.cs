@@ -27,7 +27,14 @@ namespace EBookStudio.Helpers
             return !_isExecuting && (_canExecute == null || _canExecute(parameter));
         }
 
+        // 1. 기존 UI에서 호출하는 메서드 (기존 유지)
         public async void Execute(object? parameter)
+        {
+            await ExecuteAsync(parameter);
+        }
+
+        // 2. [추가] 테스트 코드나 내부에서 await 할 수 있는 진짜 비동기 메서드
+        public async Task ExecuteAsync(object? parameter)
         {
             if (CanExecute(parameter))
             {

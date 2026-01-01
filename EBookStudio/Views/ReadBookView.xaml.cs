@@ -180,7 +180,10 @@ namespace EBookStudio.Views
             {
                 Hyperlink link = new Hyperlink(range.Start, range.End);
                 link.Style = (Style)FindResource("MemoLinkStyle");
+
+                // [수정됨] Tag와 ToolTip 모두에 내용을 저장합니다.
                 link.Tag = content;
+                link.ToolTip = content;
             }
             catch { }
         }
@@ -230,15 +233,72 @@ namespace EBookStudio.Views
 
         private void BookViewer_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { _mouseDownPosition = e.GetPosition(this); _isDragging = false; }
         private void BookViewer_PreviewMouseMove(object sender, MouseEventArgs e) { if (e.LeftButton == MouseButtonState.Pressed && (e.GetPosition(this) - _mouseDownPosition).Length > DragThreshold) _isDragging = true; }
-        private void BookViewer_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e) { if (!_isDragging && DataContext is ReadBookViewModel vm && vm.ToggleMenuCommand.CanExecute(null)) vm.ToggleMenuCommand.Execute(null); _isDragging = false; }
+
+        private void BookViewer_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+        {
+            // 드래그 중이었다면 클릭으로 처리하지 않음
+            if (_isDragging)
+            {
+                _isDragging = false;
+                return;
+            }
+
+            // 1. 클릭한 위치 가져오기
+            Point mousePoint = e.GetPosition(BookViewer);
+            TextPointer pointer = BookViewer.GetPositionFromPoint(mousePoint, true);
+
+            if (pointer != null)
+            {
+                // [수정된 부분] 클릭한 요소부터 상위로 올라가며 Hyperlink 찾기
+                DependencyObject current = pointer.Parent as DependencyObject;
+                Hyperlink hyperlink = null;
+
+                while (current != null)
+                {
+                    if (current is Hyperlink link)
+                    {
+                        hyperlink = link;
+                        break;
+                    }
+                    // 상위 요소로 이동 (TextElement인 경우 Parent 속성 사용)
+                    if (current is TextElement te) current = te.Parent;
+                    else if (current is FrameworkElement fe) current = fe.Parent;
+                    else break;
+                }
+
+                // 하이퍼링크를 찾았다면 메모창 띄우기
+                if (hyperlink != null)
+                {
+                    // Tag 또는 ToolTip에서 내용 가져오기
+                    string memoContent = hyperlink.Tag as string;
+                    if (string.IsNullOrEmpty(memoContent))
+                    {
+                        memoContent = hyperlink.ToolTip?.ToString() ?? "내용 없음";
+                    }
+
+                    // 메모창 UI 업데이트 및 표시
+                    if (MemoContentBlock != null) MemoContentBlock.Text = memoContent;
+                    if (MemoViewOverlay != null) MemoViewOverlay.Visibility = Visibility.Visible;
+
+                    // 메뉴 토글 등 다른 동작 막기
+                    return;
+                }
+            }
+
+            // 2. 하이퍼링크가 아니라면 기존처럼 메뉴바(상단/하단 바) 토글
+            if (DataContext is ReadBookViewModel vm && vm.ToggleMenuCommand.CanExecute(null))
+            {
+                vm.ToggleMenuCommand.Execute(null);
+            }
+        }
+
         private void OnCloseMemoViewClick(object sender, RoutedEventArgs e) => MemoViewOverlay.Visibility = Visibility.Collapsed;
         private void OnBorderClick(object sender, MouseButtonEventArgs e) => e.Handled = true;
 
         // =========================================================
-        // [추가됨] 설정 팝업 이벤트 핸들러 (이게 없어서 에러 났음)
+        // [설정 팝업 이벤트 핸들러]
         // =========================================================
 
-        // 설정 버튼 클릭 시 팝업 열기
         private void OnSettingButtonClick(object sender, RoutedEventArgs e)
         {
             if (SettingViewOverlay != null)
@@ -247,7 +307,6 @@ namespace EBookStudio.Views
             }
         }
 
-        // 팝업 배경 클릭 시 닫기
         private void OnCloseSettingClick(object sender, RoutedEventArgs e)
         {
             if (SettingViewOverlay != null)

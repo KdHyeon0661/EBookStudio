@@ -20,6 +20,13 @@
         <helpers:BoolToVisibilityConverter x:Key="BoolToVis"/>
         <helpers:InverseBoolToVisibilityConverter x:Key="InvBoolToVis"/>
 
+        <Style x:Key="MemoLinkStyle" TargetType="Hyperlink">
+            <Setter Property="Foreground" Value="#007AFF"/>
+            <Setter Property="TextDecorations" Value="Underline"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+        </Style>
+
         <Style x:Key="MusicSliderStyle" TargetType="Slider">
             <Setter Property="Background" Value="Transparent"/>
             <Setter Property="IsMoveToPointEnabled" Value="True"/>
@@ -315,7 +322,7 @@
         </Border>
 
         <Grid x:Name="MemoInputOverlay" Visibility="Collapsed" Background="#7F000000">
-            <Border Background="White" Width="320" Height="260" CornerRadius="12" Padding="25">
+            <Border Background="White" Width="320" Height="280" CornerRadius="12" Padding="25">
                 <Border.Effect>
                     <DropShadowEffect BlurRadius="20" Opacity="0.4"/>
                 </Border.Effect>

@@ -1,7 +1,6 @@
 ﻿using System.Threading.Tasks;
-using System.Windows;
 using System.Windows.Input;
-using EBookStudio.Helpers; // AsyncRelayCommand가 여기 있음
+using EBookStudio.Helpers; // 인터페이스 포함
 using EBookStudio.Models;
 
 namespace EBookStudio.ViewModels
@@ -10,12 +9,16 @@ namespace EBookStudio.ViewModels
     {
         private readonly MainViewModel _mainVM;
 
+        // [수정] 직접 호출 대신 인터페이스 사용
+        private readonly IAccountService _accountService;
+        private readonly IDialogService _dialogService;
+
         // --- 입력 속성 ---
         public string Email { get; set; } = string.Empty;
         public string Code { get; set; } = string.Empty;
         public string NewPassword { get; set; } = string.Empty;
 
-        // --- 상태 속성 (UI 제어) ---
+        // --- 상태 속성 ---
         private bool _isCodeSent;
         public bool IsCodeSent
         {
@@ -43,47 +46,37 @@ namespace EBookStudio.ViewModels
         public ICommand ResetPasswordCommand { get; }
         public ICommand GoBackCommand { get; }
 
-        // =========================================================
-        // [생성자] 커맨드 연결
-        // =========================================================
-        public FindAccountViewModel(MainViewModel mainVM)
+        // [핵심 수정] 생성자에서 서비스 주입 (Dependency Injection)
+        // 파라미터가 없으면(기본 실행) Real 서비스를 사용하고, 테스트 때는 가짜를 넣습니다.
+        public FindAccountViewModel(MainViewModel mainVM, IAccountService accountService = null, IDialogService dialogService = null)
         {
             _mainVM = mainVM;
+            _accountService = accountService ?? new AccountService();
+            _dialogService = dialogService ?? new DialogService();
 
-            // 1. 인증번호 발송
             SendCodeCommand = new AsyncRelayCommand(async o => await ExecuteSendCode());
-
-            // 2. 인증번호 검증
             VerifyCodeCommand = new AsyncRelayCommand(async o => await ExecuteVerifyCode());
-
-            // 3. [핵심] 비밀번호 재설정 (여기서 아래 메서드를 호출합니다)
             ResetPasswordCommand = new AsyncRelayCommand(async o => await ExecuteResetPassword());
-
-            // 뒤로가기
             GoBackCommand = new RelayCommand(o => _mainVM.NavigateToLogin());
         }
-
-        // =========================================================
-        // [메서드] 실제 로직
-        // =========================================================
 
         private async Task ExecuteSendCode()
         {
             if (string.IsNullOrWhiteSpace(Email))
             {
-                MessageBox.Show("이메일을 입력해주세요.");
+                _dialogService.ShowMessage("이메일을 입력해주세요."); // MessageBox 대체
                 return;
             }
 
-            bool success = await ApiService.SendCodeAsync(Email);
+            bool success = await _accountService.SendCodeAsync(Email); // ApiService 대체
             if (success)
             {
-                MessageBox.Show("인증번호가 발송되었습니다.");
+                _dialogService.ShowMessage("인증번호가 발송되었습니다.");
                 IsCodeSent = true;
             }
             else
             {
-                MessageBox.Show("이메일 전송 실패: 서버 오류거나 가입되지 않은 이메일입니다.");
+                _dialogService.ShowMessage("이메일 전송 실패: 서버 오류거나 가입되지 않은 이메일입니다.");
             }
         }
 
@@ -91,54 +84,50 @@ namespace EBookStudio.ViewModels
         {
             if (string.IsNullOrWhiteSpace(Code))
             {
-                MessageBox.Show("인증번호를 입력해주세요.");
+                _dialogService.ShowMessage("인증번호를 입력해주세요.");
                 return;
             }
 
-            bool success = await ApiService.VerifyCodeAsync(Email, Code);
+            bool success = await _accountService.VerifyCodeAsync(Email, Code);
             if (success)
             {
-                MessageBox.Show("인증 성공!");
+                _dialogService.ShowMessage("인증 성공!");
                 IsVerified = true;
-                FoundUsername = await ApiService.FindIdAsync(Email);
+                FoundUsername = await _accountService.FindIdAsync(Email);
             }
             else
             {
-                MessageBox.Show("인증번호가 틀렸습니다.");
+                _dialogService.ShowMessage("인증번호가 틀렸습니다.");
             }
         }
 
-        // ▼▼▼ [사용자님이 주신 코드가 여기 반영되었습니다] ▼▼▼
         private async Task ExecuteResetPassword()
         {
             if (string.IsNullOrWhiteSpace(NewPassword))
             {
-                MessageBox.Show("새 비밀번호를 입력해주세요.");
+                _dialogService.ShowMessage("새 비밀번호를 입력해주세요.");
                 return;
             }
 
             if (NewPassword.Length < 8)
             {
-                MessageBox.Show("비밀번호는 최소 8자 이상이어야 합니다.");
+                _dialogService.ShowMessage("비밀번호는 최소 8자 이상이어야 합니다.");
                 return;
             }
 
-            // [중요] 보안 수정 반영: Email + Code + NewPassword를 함께 전송
-            // (ApiService.ResetPasswordAsync 메서드도 인자가 3개로 수정되어 있어야 합니다)
-            bool success = await ApiService.ResetPasswordAsync(Email, Code, NewPassword);
+            bool success = await _accountService.ResetPasswordAsync(Email, Code, NewPassword);
 
             if (success)
             {
-                MessageBox.Show("비밀번호가 변경되었습니다.\n로그인 화면으로 이동합니다.");
+                _dialogService.ShowMessage("비밀번호가 변경되었습니다.\n로그인 화면으로 이동합니다.");
                 _mainVM.NavigateToLogin();
             }
             else
             {
-                MessageBox.Show("변경 실패: 인증 시간이 만료되었거나 오류가 발생했습니다.");
+                _dialogService.ShowMessage("변경 실패: 인증 시간이 만료되었거나 오류가 발생했습니다.");
             }
         }
 
-        // 화면 초기화용
         public void Clear()
         {
             Email = string.Empty;

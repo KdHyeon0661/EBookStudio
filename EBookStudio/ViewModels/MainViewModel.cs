@@ -1,6 +1,6 @@
 ﻿using System;
 using System.Windows.Input;
-using System.Windows.Threading; // 타이머 사용
+using System.Windows.Threading;
 using System.Threading.Tasks;
 using EBookStudio.Helpers;
 using EBookStudio.Models;
@@ -9,10 +9,13 @@ namespace EBookStudio.ViewModels
 {
     public class MainViewModel : ViewModelBase
     {
+        // [추가] ReadBookViewModel에 주입할 서비스 객체들
+        private readonly IBookFileSystem _fileSystem;
+        private readonly INoteService _noteService;
+
         // ==========================================
         // 1. 상태 관리 변수
         // ==========================================
-
         private bool _isTopBarVisible = true;
         public bool IsTopBarVisible
         {
@@ -71,7 +74,6 @@ namespace EBookStudio.ViewModels
         // ==========================================
         // 2. 하위 뷰모델 및 타이머
         // ==========================================
-
         public LibraryViewModel LibraryVM { get; set; }
         public LoginViewModel LoginVM { get; set; }
         public RegisterViewModel RegisterVM { get; set; }
@@ -83,7 +85,6 @@ namespace EBookStudio.ViewModels
         // ==========================================
         // 3. 명령어 (Commands)
         // ==========================================
-
         public ICommand GoHomeCommand { get; }
         public ICommand GoLoginCommand { get; }
         public ICommand GoRegisterCommand { get; }
@@ -95,7 +96,11 @@ namespace EBookStudio.ViewModels
         // ==========================================
         public MainViewModel()
         {
-            // 1. 네트워크 상태 체크 타이머 설정
+            // [중요] 서비스 객체 초기화
+            // 사용자님의 클래스명이 BookFileSystem, NoteService가 맞는지 꼭 확인하십시오.
+            _fileSystem = new BookFileSystem();
+            _noteService = new NoteService();
+
             _networkTimer = new DispatcherTimer();
             _networkTimer.Interval = TimeSpan.FromSeconds(3);
             _networkTimer.Tick += async (s, e) => await CheckNetworkStatus();
@@ -103,35 +108,24 @@ namespace EBookStudio.ViewModels
 
             _ = CheckNetworkStatus();
 
-            // 2. 하위 뷰모델 생성
             LibraryVM = new LibraryViewModel(this);
             LoginVM = new LoginViewModel(this);
             RegisterVM = new RegisterViewModel(this);
             FindAccountVM = new FindAccountViewModel(this);
-
-            // [수정 완료] 생성자에 빈 문자열 전달 (MyPageViewModel(string username)에 맞춤)
             MyPageVM = new MyPageViewModel(string.Empty);
 
-            // 로그아웃 요청 시 실행될 이벤트 연결
             MyPageVM.RequestLogout += () => Logout();
 
-            // 3. 마지막 사용자 확인 및 자동 동기화
             string? lastUser = FileHelper.GetLastUser();
-
             if (!string.IsNullOrEmpty(lastUser))
             {
-                // 정보 복구
                 LoggedInUser = lastUser;
-                MyPageVM.Username = lastUser; // [중요] 저장된 유저명으로 업데이트
-
-                // 서재 로드
+                MyPageVM.Username = lastUser;
                 _ = LibraryVM.LoadLibrary();
             }
 
-            // 4. 홈(서재)으로 시작
             NavigateToHome();
 
-            // 5. 명령어 연결
             GoHomeCommand = new RelayCommand(o => NavigateToHome());
 
             GoMyPageCommand = new RelayCommand(
@@ -198,7 +192,6 @@ namespace EBookStudio.ViewModels
         public void NavigateToMyPage()
         {
             IsTopBarVisible = true;
-            // 마이페이지 이동 시 현재 유저명 다시 갱신
             MyPageVM.Username = LoggedInUser;
             CurrentView = MyPageVM;
             IsAuthView = true;
@@ -206,9 +199,10 @@ namespace EBookStudio.ViewModels
 
         public void NavigateToReader(Book book)
         {
-            // 책 읽을 때는 상단 바 숨김
             IsTopBarVisible = false;
-            CurrentView = new ReadBookViewModel(this, book);
+            // [수정] 사용자님의 ReadBookViewModel 생성자 파라미터 4개에 정확히 맞춤
+            // 인자: MainViewModel(this), book, IBookFileSystem, INoteService
+            CurrentView = new ReadBookViewModel(this, book, _fileSystem, _noteService);
             IsAuthView = true;
         }
 
@@ -216,29 +210,19 @@ namespace EBookStudio.ViewModels
         {
             IsLoggedIn = true;
             LoggedInUser = username;
-
-            // [중요] 로그인 성공 시 마이페이지 ViewModel에도 유저 정보 전달
             MyPageVM.Username = username;
-
             FileHelper.SaveLastUser(username);
-
             _ = LibraryVM.LoadLibrary();
-
             NavigateToHome();
         }
 
         public void Logout()
         {
-            // ApiService 토큰 삭제
             ApiService.Logout();
-
             IsTopBarVisible = true;
             IsLoggedIn = false;
             LoggedInUser = string.Empty;
-
-            // 마이페이지 정보도 초기화
             MyPageVM.Username = string.Empty;
-
             _ = LibraryVM.LoadLibrary();
             NavigateToHome();
         }
