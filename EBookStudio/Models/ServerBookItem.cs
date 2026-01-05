@@ -1,5 +1,4 @@
 ﻿using EBookStudio.Helpers;
-using EBookStudio.ViewModels; // ViewModelBase 사용
 
 namespace EBookStudio.Models
 {
@@ -18,6 +17,6 @@ namespace EBookStudio.Models
         // 화면 표시용 (로컬에 있는지 여부 등을 체크해서 버튼 활성화를 할 수도 있음)
         public string DisplayCoverUrl => string.IsNullOrEmpty(CoverUrl)
             ? "/Images/default_cover.png" // 기본 이미지 경로
-            : $"{ApiService.BaseUrl}{CoverUrl}";
+            : $"{ApiConfig.BaseUrl}{CoverUrl}";
     }
 }

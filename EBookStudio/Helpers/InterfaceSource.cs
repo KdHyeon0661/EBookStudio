@@ -1,11 +1,5 @@
 ﻿using EBookStudio.Models;
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Media;
-using static EBookStudio.Models.ApiService;
 
 namespace EBookStudio.Helpers
 {
@@ -17,7 +11,7 @@ namespace EBookStudio.Helpers
 
     public interface ILibraryService
     {
-        Task<ApiService.UploadResult> UploadBookAsync(string filePath, string username);
+        Task<UploadResult> UploadBookAsync(string filePath, string username);
         Task<byte[]> DownloadBytesAsync(string url);
         Task<bool> DownloadFileAsync(string url, string localPath);
         Task<List<string>> GetMusicFileListAsync(string username, string bookId);
@@ -73,7 +67,7 @@ namespace EBookStudio.Helpers
         Task<bool> SendVerificationCodeAsync(string email);
         Task<bool> VerifyCodeAsync(string email, string code);
         Task<bool> RegisterAsync(string username, string password, string email);
-        Task<List<ServerBookDto>> GetMyServerBooksAsync(string username);
+        Task<List<ServerBook>> GetMyServerBooksAsync(string username);
         Task<bool> DeleteServerBookAsync(string bookTitle);
         Task<bool> DownloadFileAsync(string url, string localPath);
         Task<List<string>> GetMusicFileListAsync(string username, string bookTitle);
@@ -82,5 +76,22 @@ namespace EBookStudio.Helpers
     public interface INetworkService
     {
         Task<bool> CheckInternetConnectionAsync();
+    }
+
+    public interface IApiService
+    {
+        Task<bool> RegisterAsync(string username, string password, string email, string code);
+        Task<bool> LoginAsync(string username, string password);
+        void Logout();
+        Task<bool> SendCodeAsync(string email);
+        Task<bool> VerifyCodeAsync(string email, string code);
+        Task<string?> FindIdAsync(string email);
+        Task<bool> ResetPasswordAsync(string email, string code, string newPassword);
+        Task<UploadResult> UploadBookAsync(string filePath, string username);
+        Task<bool> DownloadFileAsync(string url, string localPath);
+        Task<byte[]> DownloadBytesAsync(string url);
+        Task<List<string>> GetMusicFileListAsync(string username, string bookTitle);
+        Task<List<ServerBook>> GetMyServerBooksAsync(string username);
+        Task<bool> DeleteServerBookAsync(string bookTitle);
     }
 }

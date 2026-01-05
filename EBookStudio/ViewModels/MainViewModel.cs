@@ -218,7 +218,7 @@ namespace EBookStudio.ViewModels
 
         public void Logout()
         {
-            ApiService.Logout();
+            Logout();
             IsTopBarVisible = true;
             IsLoggedIn = false;
             LoggedInUser = string.Empty;

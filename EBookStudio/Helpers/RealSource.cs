@@ -2,18 +2,18 @@
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Windows;
 using System.Windows.Media;
-using static EBookStudio.Models.ApiService;
 
 namespace EBookStudio.Helpers
 {
     public class LibraryService : ILibraryService
     {
-        public Task<ApiService.UploadResult> UploadBookAsync(string f, string u)
-            => ApiService.UploadBookAsync(f, u);
-        public Task<byte[]> DownloadBytesAsync(string url) => ApiService.DownloadBytesAsync(url);
-        public Task<bool> DownloadFileAsync(string u, string p) => ApiService.DownloadFileAsync(u, p);
-        public Task<List<string>> GetMusicFileListAsync(string u, string b) => ApiService.GetMusicFileListAsync(u, b);
+        public Task<UploadResult> UploadBookAsync(string f, string u)
+            => UploadBookAsync(f, u);
+        public Task<byte[]> DownloadBytesAsync(string url) => DownloadBytesAsync(url);
+        public Task<bool> DownloadFileAsync(string u, string p) => DownloadFileAsync(u, p);
+        public Task<List<string>> GetMusicFileListAsync(string u, string b) => GetMusicFileListAsync(u, b);
     }
 
     public class FilePickerService : IFilePickerService
@@ -32,10 +32,10 @@ namespace EBookStudio.Helpers
     public class AccountService : IAccountService
     {
         // 실제 구현: "그래, 기존에 있던 ApiService를 불러서 진짜 서버에 보낼게"
-        public Task<bool> SendCodeAsync(string email) => ApiService.SendCodeAsync(email);
-        public Task<bool> VerifyCodeAsync(string e, string c) => ApiService.VerifyCodeAsync(e, c);
-        public Task<string?> FindIdAsync(string email) => ApiService.FindIdAsync(email);
-        public Task<bool> ResetPasswordAsync(string e, string c, string p) => ApiService.ResetPasswordAsync(e, c, p);
+        public Task<bool> SendCodeAsync(string email) => SendCodeAsync(email);
+        public Task<bool> VerifyCodeAsync(string e, string c) => VerifyCodeAsync(e, c);
+        public Task<string?> FindIdAsync(string email) => FindIdAsync(email);
+        public Task<bool> ResetPasswordAsync(string e, string c, string p) => ResetPasswordAsync(e, c, p);
     }
 
     public class DialogService : IDialogService
@@ -44,9 +44,10 @@ namespace EBookStudio.Helpers
         {
             System.Windows.MessageBox.Show(message);
         }
-        public bool ShowConfirm(string message, string title)
+        public bool ShowConfirm(string message, string title) // 예/아니오 확인 대화상자 표시
         {
-            return true;
+            var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question);
+            return result == MessageBoxResult.Yes;
         }
     }
 
@@ -84,23 +85,23 @@ namespace EBookStudio.Helpers
     public class AuthService : IAuthService
     {
         // 인증 관련
-        public Task<bool> LoginAsync(string u, string p) => ApiService.LoginAsync(u, p);
-        public Task<bool> SendVerificationCodeAsync(string e) => ApiService.SendVerificationCodeAsync(e);
-        public Task<bool> VerifyCodeAsync(string e, string c) => ApiService.VerifyCodeAsync(e, c);
-        public Task<bool> RegisterAsync(string u, string p, string e) => ApiService.RegisterAsync(u, p, e);
+        public Task<bool> LoginAsync(string u, string p) => LoginAsync(u, p);
+        public Task<bool> SendVerificationCodeAsync(string e) => SendVerificationCodeAsync(e);
+        public Task<bool> VerifyCodeAsync(string e, string c) => VerifyCodeAsync(e, c);
+        public Task<bool> RegisterAsync(string u, string p, string e) => RegisterAsync(u, p, e);
 
         // [추가] 서버 데이터 관리 관련
-        public Task<List<ServerBookDto>> GetMyServerBooksAsync(string username)
-            => ApiService.GetMyServerBooksAsync(username);
+        public Task<List<ServerBook>> GetMyServerBooksAsync(string username)
+            => GetMyServerBooksAsync(username);
 
         public Task<bool> DeleteServerBookAsync(string bookTitle)
-            => ApiService.DeleteServerBookAsync(bookTitle);
+            => DeleteServerBookAsync(bookTitle);
 
         public Task<bool> DownloadFileAsync(string url, string localPath)
-            => ApiService.DownloadFileAsync(url, localPath);
+            => DownloadFileAsync(url, localPath);
 
         public Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
-            => ApiService.GetMusicFileListAsync(username, bookTitle);
+            => GetMusicFileListAsync(username, bookTitle);
     }
 
     public class NetworkService : INetworkService

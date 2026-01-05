@@ -14,6 +14,8 @@ namespace EBookStudio.Helpers
         // 3. 사용자 데이터 폴더: .../DownloadCache/users
         public static string UsersBasePath => Path.Combine(BasePath, "users");
 
+        public static string GetCoverFileName(string bookTitle) => $"{bookTitle}.png";
+
         /// <summary>
         /// 로컬 파일의 절대 경로를 반환합니다.
         /// </summary>

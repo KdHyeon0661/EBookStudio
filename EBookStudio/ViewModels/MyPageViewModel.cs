@@ -200,15 +200,15 @@ namespace EBookStudio.ViewModels
         private async Task ProcessDownloadBook(string bookTitle)
         {
             string jsonName = $"{bookTitle}_full.json";
-            string serverJsonUrl = $"{ApiService.BaseUrl}/files/{Username}/{bookTitle}/{jsonName}";
+            string serverJsonUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookTitle}/{jsonName}";
             string localJsonPath = FileHelper.GetLocalFilePath(Username, bookTitle, "", jsonName);
 
             bool jsonOk = await _authService.DownloadFileAsync(serverJsonUrl, localJsonPath);
             if (!jsonOk) return;
 
-            string coverName = $"{bookTitle}.png";
-            string serverCoverUrl = $"{ApiService.BaseUrl}/files/{Username}/{bookTitle}/{coverName}";
+            string coverName = FileHelper.GetCoverFileName(bookTitle);
             string localCoverPath = FileHelper.GetLocalFilePath(Username, bookTitle, "", coverName);
+            string serverCoverUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookTitle}/{coverName}";
             await _authService.DownloadFileAsync(serverCoverUrl, localCoverPath);
 
             await DownloadMusicFromList(Username, bookTitle);
@@ -230,7 +230,7 @@ namespace EBookStudio.ViewModels
                 string localPath = Path.Combine(localMusicFolder, file);
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    string serverUrl = $"{ApiService.BaseUrl}/files/{username}/{bookTitle}/music/{file}";
+                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookTitle}/music/{file}";
                     await _authService.DownloadFileAsync(serverUrl, localPath);
                 }
             }

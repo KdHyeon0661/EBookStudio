@@ -1,13 +1,9 @@
 ﻿using EBookStudio.Helpers;
 using EBookStudio.Models;
-using System;
-using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
-using System.Linq;
 using System.Text.Json;
 using System.Text.RegularExpressions;
-using System.Threading.Tasks;
 using System.Windows.Input;
 
 namespace EBookStudio.ViewModels
@@ -15,8 +11,6 @@ namespace EBookStudio.ViewModels
     public class LibraryViewModel : ViewModelBase
     {
         private readonly MainViewModel _mainVM;
-
-        // [핵심 변경] 직접 호출 대신 인터페이스 사용
         private readonly ILibraryService _libraryService;
         private readonly IDialogService _dialogService;
         private readonly IFilePickerService _filePickerService;
@@ -281,10 +275,10 @@ namespace EBookStudio.ViewModels
                     int maxRetries = 30;
 
                     string targetJsonName = result.Text ?? $"{fileName}_full.json";
-                    string textUrl = $"{ApiService.BaseUrl}/files/{username}/{fileName}/{targetJsonName}";
+                    string textUrl = $"{ApiConfig.BaseUrl}/files/{username}/{fileName}/{targetJsonName}";
 
                     string targetCoverName = result.Cover ?? $"{fileName}.png";
-                    string coverUrl = $"{ApiService.BaseUrl}/files/{username}/{fileName}/{targetCoverName}";
+                    string coverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{fileName}/{targetCoverName}";
 
                     while (retryCount < maxRetries)
                     {
@@ -310,8 +304,7 @@ namespace EBookStudio.ViewModels
 
                     newBook.StatusMessage = "다운로드 중...";
 
-                    string localCoverPath = FileHelper.GetLocalFilePath(username, safeTitle, "", "cover.png");
-                    // [수정] ApiService -> _libraryService
+                    string localCoverPath = FileHelper.GetLocalFilePath(username, safeTitle, "", FileHelper.GetCoverFileName(safeTitle));
                     bool coverOk = await _libraryService.DownloadFileAsync(coverUrl, localCoverPath);
 
                     string localTextPath = FileHelper.GetLocalFilePath(username, safeTitle, "", targetJsonName);
@@ -421,7 +414,7 @@ namespace EBookStudio.ViewModels
 
                 if (!File.Exists(localPath))
                 {
-                    string serverUrl = $"{ApiService.BaseUrl}/files/{username}/{bookId}/music/{file}";
+                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookId}/music/{file}";
                     // [수정] ApiService -> _libraryService
                     await _libraryService.DownloadFileAsync(serverUrl, localPath);
                 }

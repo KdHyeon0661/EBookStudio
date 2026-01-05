@@ -251,7 +251,7 @@ namespace EBookStudio.Views
             {
                 // [수정된 부분] 클릭한 요소부터 상위로 올라가며 Hyperlink 찾기
                 DependencyObject current = pointer.Parent as DependencyObject;
-                Hyperlink hyperlink = null;
+                Hyperlink? hyperlink = null;
 
                 while (current != null)
                 {
@@ -270,7 +270,7 @@ namespace EBookStudio.Views
                 if (hyperlink != null)
                 {
                     // Tag 또는 ToolTip에서 내용 가져오기
-                    string memoContent = hyperlink.Tag as string;
+                    string? memoContent = hyperlink.Tag as string;
                     if (string.IsNullOrEmpty(memoContent))
                     {
                         memoContent = hyperlink.ToolTip?.ToString() ?? "내용 없음";

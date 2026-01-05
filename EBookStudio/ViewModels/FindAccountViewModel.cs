@@ -46,9 +46,7 @@ namespace EBookStudio.ViewModels
         public ICommand ResetPasswordCommand { get; }
         public ICommand GoBackCommand { get; }
 
-        // [핵심 수정] 생성자에서 서비스 주입 (Dependency Injection)
-        // 파라미터가 없으면(기본 실행) Real 서비스를 사용하고, 테스트 때는 가짜를 넣습니다.
-        public FindAccountViewModel(MainViewModel mainVM, IAccountService accountService = null, IDialogService dialogService = null)
+        public FindAccountViewModel(MainViewModel mainVM, IAccountService? accountService = null, IDialogService? dialogService = null)
         {
             _mainVM = mainVM;
             _accountService = accountService ?? new AccountService();
