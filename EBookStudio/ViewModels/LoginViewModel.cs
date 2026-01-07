@@ -10,8 +10,6 @@ namespace EBookStudio.ViewModels
     public class LoginViewModel : ViewModelBase
     {
         private readonly MainViewModel _mainVM;
-
-        // [추가] 의존성 주입을 위한 서비스 필드
         private readonly IAuthService _authService;
         private readonly IDialogService _dialogService;
 

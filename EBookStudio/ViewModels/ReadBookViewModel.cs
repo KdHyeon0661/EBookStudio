@@ -174,9 +174,12 @@ namespace EBookStudio.ViewModels
                 {
                     _selectedChapterIndex = value;
                     OnPropertyChanged();
-                    if (value >= 0 && _chapterStartPageMap.ContainsKey(value))
+
+                    int dataKey = value + 1;
+
+                    if (value >= 0 && _chapterStartPageMap.ContainsKey(dataKey))
                     {
-                        int targetPage = _chapterStartPageMap[value];
+                        int targetPage = _chapterStartPageMap[dataKey];
                         if (CurrentPageNum != targetPage)
                         {
                             CurrentPageNum = targetPage;

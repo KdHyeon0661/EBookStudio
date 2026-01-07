@@ -1,4 +1,5 @@
 ﻿using EBookStudio.Models;
+using EBookStudio.Services;
 using System.ComponentModel;
 using System.IO;
 using System.Runtime.CompilerServices;
@@ -9,11 +10,32 @@ namespace EBookStudio.Helpers
 {
     public class LibraryService : ILibraryService
     {
-        public Task<UploadResult> UploadBookAsync(string f, string u)
-            => UploadBookAsync(f, u);
-        public Task<byte[]> DownloadBytesAsync(string url) => DownloadBytesAsync(url);
-        public Task<bool> DownloadFileAsync(string u, string p) => DownloadFileAsync(u, p);
-        public Task<List<string>> GetMusicFileListAsync(string u, string b) => GetMusicFileListAsync(u, b);
+        private readonly IApiService _apiService;
+
+        public LibraryService(IApiService? apiService = null)
+        {
+            _apiService = apiService ?? new ApiService();
+        }
+
+        public async Task<UploadResult> UploadBookAsync(string filePath, string username)
+        {
+            return await _apiService.UploadBookAsync(filePath, username);
+        }
+
+        public async Task<byte[]> DownloadBytesAsync(string url)
+        {
+            return await _apiService.DownloadBytesAsync(url);
+        }
+
+        public async Task<bool> DownloadFileAsync(string url, string localPath)
+        {
+            return await _apiService.DownloadFileAsync(url, localPath);
+        }
+
+        public async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
+        {
+            return await _apiService.GetMusicFileListAsync(username, bookTitle);
+        }
     }
 
     public class FilePickerService : IFilePickerService
@@ -31,11 +53,32 @@ namespace EBookStudio.Helpers
 
     public class AccountService : IAccountService
     {
-        // 실제 구현: "그래, 기존에 있던 ApiService를 불러서 진짜 서버에 보낼게"
-        public Task<bool> SendCodeAsync(string email) => SendCodeAsync(email);
-        public Task<bool> VerifyCodeAsync(string e, string c) => VerifyCodeAsync(e, c);
-        public Task<string?> FindIdAsync(string email) => FindIdAsync(email);
-        public Task<bool> ResetPasswordAsync(string e, string c, string p) => ResetPasswordAsync(e, c, p);
+        private readonly IApiService _apiService;
+
+        public AccountService(IApiService? apiService = null)
+        {
+            _apiService = apiService ?? new ApiService();
+        }
+
+        public async Task<bool> SendCodeAsync(string email)
+        {
+            return await _apiService.SendCodeAsync(email);
+        }
+
+        public async Task<bool> VerifyCodeAsync(string email, string code)
+        {
+            return await _apiService.VerifyCodeAsync(email, code);
+        }
+
+        public async Task<string?> FindIdAsync(string email)
+        {
+            return await _apiService.FindIdAsync(email);
+        }
+
+        public async Task<bool> ResetPasswordAsync(string email, string code, string newPassword)
+        {
+            return await _apiService.ResetPasswordAsync(email, code, newPassword);
+        }
     }
 
     public class DialogService : IDialogService
@@ -84,24 +127,38 @@ namespace EBookStudio.Helpers
 
     public class AuthService : IAuthService
     {
-        // 인증 관련
-        public Task<bool> LoginAsync(string u, string p) => LoginAsync(u, p);
-        public Task<bool> SendVerificationCodeAsync(string e) => SendVerificationCodeAsync(e);
-        public Task<bool> VerifyCodeAsync(string e, string c) => VerifyCodeAsync(e, c);
-        public Task<bool> RegisterAsync(string u, string p, string e) => RegisterAsync(u, p, e);
+        private readonly IApiService _apiService;
 
-        // [추가] 서버 데이터 관리 관련
-        public Task<List<ServerBook>> GetMyServerBooksAsync(string username)
-            => GetMyServerBooksAsync(username);
+        public AuthService(IApiService? apiService = null)
+        {
+            _apiService = apiService ?? new ApiService();
+        }
 
-        public Task<bool> DeleteServerBookAsync(string bookTitle)
-            => DeleteServerBookAsync(bookTitle);
+        public async Task<bool> LoginAsync(string u, string p)
+            => await _apiService.LoginAsync(u, p);
 
-        public Task<bool> DownloadFileAsync(string url, string localPath)
-            => DownloadFileAsync(url, localPath);
+        public async Task<bool> SendVerificationCodeAsync(string e)
+            => await _apiService.SendCodeAsync(e);
 
-        public Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
-            => GetMusicFileListAsync(username, bookTitle);
+        public async Task<bool> VerifyCodeAsync(string e, string c)
+            => await _apiService.VerifyCodeAsync(e, c);
+
+        public async Task<bool> RegisterAsync(string u, string p, string e)
+        {
+            return await _apiService.RegisterAsync(u, p, e, "");
+        }
+
+        public async Task<List<ServerBook>> GetMyServerBooksAsync(string username)
+            => await _apiService.GetMyServerBooksAsync(username);
+
+        public async Task<bool> DeleteServerBookAsync(string bookTitle)
+            => await _apiService.DeleteServerBookAsync(bookTitle);
+
+        public async Task<bool> DownloadFileAsync(string url, string localPath)
+            => await _apiService.DownloadFileAsync(url, localPath);
+
+        public async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
+            => await _apiService.GetMusicFileListAsync(username, bookTitle);
     }
 
     public class NetworkService : INetworkService
