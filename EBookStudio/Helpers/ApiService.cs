@@ -102,20 +102,20 @@ namespace EBookStudio.Services
                 using var fileStream = new FileStream(filePath, FileMode.Open, FileAccess.Read);
                 var fileContent = new StreamContent(fileStream);
                 fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
+
                 content.Add(fileContent, "file", Path.GetFileName(filePath));
-                content.Add(new StringContent(username), "username");
 
                 var response = await _client.PostAsync($"{ApiConfig.BaseUrl}/upload_book", content);
                 if (response.IsSuccessStatusCode)
                 {
                     var result = await response.Content.ReadFromJsonAsync<UploadResponse>();
-                    // 표지 파일명 규칙 통일: 책제목.png
-                    string finalCover = $"{result?.book_title}.png";
 
                     return new UploadResult
                     {
                         Success = true,
-                        Cover = finalCover,
+                        BookTitle = result?.book_title,
+                        BookFolder = result?.book_folder, // [중요] 폴더명 받기
+                        Cover = result?.cover,
                         Text = result?.text,
                         Author = result?.author,
                         MusicFiles = result?.music_files ?? new List<string>()
@@ -145,11 +145,12 @@ namespace EBookStudio.Services
             catch { return Array.Empty<byte>(); }
         }
 
-        public async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
+        // [수정] bookTitle -> bookFolder
+        public async Task<List<string>> GetMusicFileListAsync(string username, string bookFolder)
         {
             try
             {
-                var res = await _client.GetAsync($"{ApiConfig.BaseUrl}/list_music_files/{username}/{bookTitle}");
+                var res = await _client.GetAsync($"{ApiConfig.BaseUrl}/list_music_files/{username}/{bookFolder}");
                 if (res.IsSuccessStatusCode)
                 {
                     var result = await res.Content.ReadFromJsonAsync<Dictionary<string, List<string>>>();
@@ -175,11 +176,11 @@ namespace EBookStudio.Services
             return new List<ServerBook>();
         }
 
-        public async Task<bool> DeleteServerBookAsync(string bookTitle)
+        public async Task<bool> DeleteServerBookAsync(string bookFolder)
         {
             try
             {
-                var res = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/delete_server_book", new { book_title = bookTitle });
+                var res = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/delete_server_book", new { book_folder = bookFolder });
                 return res.IsSuccessStatusCode;
             }
             catch { return false; }

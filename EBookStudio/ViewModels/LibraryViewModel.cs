@@ -58,7 +58,6 @@ namespace EBookStudio.ViewModels
         {
             _mainVM = mainVM;
 
-            // 의존성 주입 (없으면 실제 서비스 사용)
             _libraryService = libraryService ?? new LibraryService();
             _dialogService = dialogService ?? new DialogService();
             _filePickerService = filePickerService ?? new FilePickerService();
@@ -95,7 +94,9 @@ namespace EBookStudio.ViewModels
             if (isConfirmed)
             {
                 string username = _mainVM.LoggedInUser;
-                string safeUserDir = Path.Combine(FileHelper.UsersBasePath, username, book.Title);
+                // [수정] Title 대신 FolderId 사용 (없으면 Title 사용)
+                string folderName = !string.IsNullOrEmpty(book.FolderId) ? book.FolderId : book.Title;
+                string safeUserDir = Path.Combine(FileHelper.UsersBasePath, username, folderName);
 
                 if (Directory.Exists(safeUserDir))
                 {
@@ -167,7 +168,11 @@ namespace EBookStudio.ViewModels
                                 book.IsAvailable = false;
                             }
 
-                            var progress = ReadingProgressManager.GetProgress(username, book.Title);
+                            // [수정] FolderId가 비어있다면 Title로 대체 (하위 호환)
+                            if (string.IsNullOrEmpty(book.FolderId)) book.FolderId = book.Title;
+
+                            // [수정] 진도율 저장 시에도 FolderId 사용
+                            var progress = ReadingProgressManager.GetProgress(username, book.FolderId);
 
                             if (progress != null)
                             {
@@ -200,20 +205,35 @@ namespace EBookStudio.ViewModels
                 foreach (var dir in bookDirs)
                 {
                     var dirInfo = new DirectoryInfo(dir);
-                    string title = dirInfo.Name;
+                    string folderName = dirInfo.Name; // 실제 폴더명 (예: 소나기_uuid)
 
-                    if (_allBooks.Any(b => b.Title == title)) continue;
+                    // 폴더명에서 UUID 제거하고 제목만 추출 (표시용)
+                    string displayTitle = folderName;
+                    if (folderName.Contains("_"))
+                    {
+                        var parts = folderName.Split('_');
+                        // 마지막 부분이 UUID(8자리 이상)라고 가정
+                        if (parts.Length > 1 && parts.Last().Length >= 8)
+                        {
+                            displayTitle = string.Join("_", parts.Take(parts.Length - 1));
+                        }
+                    }
+
+                    // 이미 리스트에 있는지 확인 (FolderId 기준)
+                    if (_allBooks.Any(b => b.FolderId == folderName)) continue;
 
                     var newBook = new Book
                     {
-                        Title = title,
-                        FileName = $"{title}.pdf",
+                        Title = displayTitle,      // 화면용
+                        FolderId = folderName,     // [중요] 실제 폴더명
+                        FileName = $"{displayTitle}.json", // (추정)
                         IsAvailable = true,
                         CreatedAt = dirInfo.CreationTime
                     };
 
-                    string coverPath = Path.Combine(dir, $"{title}.png");
-                    if (!File.Exists(coverPath)) coverPath = Path.Combine(dir, "covers", $"{title}.png");
+                    string coverPath = Path.Combine(dir, $"{folderName}.png");
+                    // 구버전 호환 (폴더명.png가 없으면 제목.png 시도)
+                    if (!File.Exists(coverPath)) coverPath = Path.Combine(dir, $"{displayTitle}.png");
 
                     if (File.Exists(coverPath)) newBook.CoverUrl = coverPath;
 
@@ -226,12 +246,10 @@ namespace EBookStudio.ViewModels
         {
             if (!_mainVM.IsLoggedIn)
             {
-                // [수정] MessageBox -> _dialogService
                 _dialogService.ShowMessage("로그인이 필요합니다.");
                 return;
             }
 
-            // [수정] OpenFileDialog -> _filePickerService
             string? filePath = _filePickerService.PickPdfFile();
 
             if (!string.IsNullOrEmpty(filePath))
@@ -244,7 +262,7 @@ namespace EBookStudio.ViewModels
 
                 var newBook = new Book
                 {
-                    Title = fileName,
+                    Title = fileName, // 일단 파일명으로 제목 설정
                     Author = username,
                     CreatedAt = DateTime.Now,
                     CoverColor = "#DDDDDD",
@@ -262,27 +280,32 @@ namespace EBookStudio.ViewModels
                 await Task.Delay(500);
                 newBook.StatusMessage = "서버 분석 대기...";
 
-                // [수정] ApiService -> _libraryService
                 var result = await _libraryService.UploadBookAsync(filePath, username);
 
                 if (result.Success)
                 {
-                    string safeTitle = newBook.Title;
+                    // [중요] 서버가 정해준 FolderId 저장
+                    newBook.FolderId = result.BookFolder ?? newBook.Title;
+                    newBook.Title = result.BookTitle ?? newBook.Title; // 서버에서 정제된 제목이 오면 반영
+
+                    string safeFolderId = newBook.FolderId; // 실제 폴더명 사용
 
                     newBook.StatusMessage = "AI 분석 중...";
                     bool isReady = false;
                     int retryCount = 0;
                     int maxRetries = 30;
 
-                    string targetJsonName = result.Text ?? $"{fileName}_full.json";
-                    string textUrl = $"{ApiConfig.BaseUrl}/files/{username}/{fileName}/{targetJsonName}";
+                    // URL 요청 시에는 실제 FolderId 사용
+                    string targetJsonName = result.Text ?? $"{newBook.Title}_full.json";
+                    string textUrl = $"{ApiConfig.BaseUrl}/files/{username}/{safeFolderId}/{targetJsonName}";
 
-                    string targetCoverName = result.Cover ?? $"{fileName}.png";
-                    string coverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{fileName}/{targetCoverName}";
+                    // 커버 이미지도 FolderId 기준일 수 있음 (서버 로직에 따라 다름)
+                    // 보통은 제목.png 지만 안전하게 result.Cover 사용
+                    string targetCoverName = result.Cover ?? $"{safeFolderId}.png";
+                    string coverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{safeFolderId}/{targetCoverName}";
 
                     while (retryCount < maxRetries)
                     {
-                        // [수정] ApiService -> _libraryService
                         var checkBytes = await _libraryService.DownloadBytesAsync(textUrl);
                         if (checkBytes != null && checkBytes.Length > 0)
                         {
@@ -304,13 +327,15 @@ namespace EBookStudio.ViewModels
 
                     newBook.StatusMessage = "다운로드 중...";
 
-                    string localCoverPath = FileHelper.GetLocalFilePath(username, safeTitle, "", FileHelper.GetCoverFileName(safeTitle));
+                    // [수정] 저장 경로 생성 시 safeFolderId 사용
+                    string localCoverPath = FileHelper.GetLocalFilePath(username, safeFolderId, "", targetCoverName);
                     bool coverOk = await _libraryService.DownloadFileAsync(coverUrl, localCoverPath);
 
-                    string localTextPath = FileHelper.GetLocalFilePath(username, safeTitle, "", targetJsonName);
+                    string localTextPath = FileHelper.GetLocalFilePath(username, safeFolderId, "", targetJsonName);
                     await _libraryService.DownloadFileAsync(textUrl, localTextPath);
 
-                    await DownloadAllMusicFiles(username, fileName, safeTitle);
+                    // [수정] 음악 다운로드 시 safeFolderId 전달
+                    await DownloadAllMusicFiles(username, safeFolderId);
 
                     newBook.IsBusy = false;
                     newBook.FileName = targetJsonName;
@@ -336,7 +361,6 @@ namespace EBookStudio.ViewModels
 
         private async Task<bool> CheckCopyrightAndDRM(string path)
         {
-            // PDF 헤더 체크 로직 (ViewModel에 남겨둠)
             bool isPdf = await Task.Run(() =>
             {
                 try
@@ -354,12 +378,10 @@ namespace EBookStudio.ViewModels
 
             if (!isPdf)
             {
-                // [수정] MessageBox -> _dialogService
                 _dialogService.ShowMessage("올바른 PDF 파일이 아닙니다.");
                 return false;
             }
 
-            // [수정] MessageBox -> _dialogService.ShowConfirm
             return _dialogService.ShowConfirm(
                 $"파일: {Path.GetFileName(path)}\n\n저작권 문제가 없는 파일이며,\nDRM이 걸려있지 않은 파일입니까?",
                 "업로드 확인");
@@ -396,14 +418,15 @@ namespace EBookStudio.ViewModels
             }
         }
 
-        private async Task DownloadAllMusicFiles(string username, string bookId, string bookTitle)
+        // [수정] 인자명을 bookId -> bookFolderId로 변경
+        private async Task DownloadAllMusicFiles(string username, string bookFolderId)
         {
-            // [수정] ApiService -> _libraryService
-            var musicFiles = await _libraryService.GetMusicFileListAsync(username, bookId);
+            var musicFiles = await _libraryService.GetMusicFileListAsync(username, bookFolderId);
 
             if (musicFiles == null || musicFiles.Count == 0) return;
 
-            string tempPath = FileHelper.GetLocalFilePath(username, bookTitle, "music", "temp.wav");
+            // [수정] FileHelper 호출 시 bookFolderId 전달
+            string tempPath = FileHelper.GetLocalFilePath(username, bookFolderId, "music", "temp.wav");
             string localMusicFolder = Path.GetDirectoryName(tempPath)!;
 
             if (!Directory.Exists(localMusicFolder)) Directory.CreateDirectory(localMusicFolder);
@@ -414,8 +437,8 @@ namespace EBookStudio.ViewModels
 
                 if (!File.Exists(localPath))
                 {
-                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookId}/music/{file}";
-                    // [수정] ApiService -> _libraryService
+                    // URL에도 bookFolderId 사용
+                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookFolderId}/music/{file}";
                     await _libraryService.DownloadFileAsync(serverUrl, localPath);
                 }
             }

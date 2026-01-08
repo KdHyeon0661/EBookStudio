@@ -132,7 +132,9 @@ namespace EBookStudio.ViewModels
 
                     if (TotalPages > 0 && _currentBook != null)
                     {
-                        ReadingProgressManager.SaveProgress(_username, _currentBook.Title, _currentPageNum, TotalPages);
+                        // [수정] FolderId 사용
+                        string targetId = !string.IsNullOrEmpty(_currentBook.FolderId) ? _currentBook.FolderId : _currentBook.Title;
+                        ReadingProgressManager.SaveProgress(_username, targetId, _currentPageNum, TotalPages);
                     }
                 }
             }
@@ -201,14 +203,15 @@ namespace EBookStudio.ViewModels
         public ICommand OpenSettingCommand { get; }
         public ICommand ToggleBookmarkCommand { get; }
 
-        // [수정] 생성자에 인터페이스 파라미터 추가 (변수명 그대로 유지)
         public ReadBookViewModel(MainViewModel mainVM, Book book, IBookFileSystem? fileSystem = null, INoteService? noteService = null)
         {
             _mainVM = mainVM;
             _currentBook = book;
             _username = mainVM.LoggedInUser;
 
-            // [추가] 서비스 초기화
+            // [안전장치] 만약 FolderId가 없다면 Title을 사용 (하위 호환)
+            if (string.IsNullOrEmpty(_currentBook.FolderId)) _currentBook.FolderId = _currentBook.Title;
+
             _fileSystem = fileSystem ?? new BookFileSystem();
             _noteService = noteService ?? new NoteService();
 
@@ -233,9 +236,9 @@ namespace EBookStudio.ViewModels
                 IsBookmarked = !IsBookmarked;
                 var item = new NoteItem { Type = "Bookmark", PageNumber = CurrentPageNum, Content = $"p.{CurrentPageNum} - {DateTime.Now:yyyy.MM.dd}", CreatedAt = DateTime.Now };
 
-                // [수정] NoteManager 직접 호출 대신 _noteService 사용
-                if (IsBookmarked) _noteService.AddItem(_username, _currentBook.Title, item);
-                else _noteService.RemoveItem(_username, _currentBook.Title, item);
+                // [수정] FolderId 사용
+                if (IsBookmarked) _noteService.AddItem(_username, _currentBook.FolderId, item);
+                else _noteService.RemoveItem(_username, _currentBook.FolderId, item);
             });
 
             _mediaPlayer.MediaEnded += (s, e) =>
@@ -288,14 +291,15 @@ namespace EBookStudio.ViewModels
                 if (targetMusic.StartsWith("music/") || targetMusic.StartsWith("music\\"))
                 {
                     string fileName = Path.GetFileName(targetMusic);
-                    musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "music", fileName);
+                    // [수정] FolderId 사용
+                    musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "music", fileName);
                 }
                 else
                 {
-                    musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", targetMusic);
+                    // [수정] FolderId 사용
+                    musicPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", targetMusic);
                 }
 
-                // [수정] File.Exists 대신 _fileSystem 사용
                 if (_fileSystem.FileExists(musicPath))
                 {
                     _mediaPlayer.Stop();
@@ -326,8 +330,8 @@ namespace EBookStudio.ViewModels
 
         public void CheckCurrentPageStatus()
         {
-            // [수정] NoteManager 직접 호출 대신 _noteService 사용
-            var noteData = _noteService.LoadNotes(_username, _currentBook.Title);
+            // [수정] FolderId 사용
+            var noteData = _noteService.LoadNotes(_username, _currentBook.FolderId);
             bool isSaved = noteData.Bookmarks.Any(x => x.PageNumber == CurrentPageNum);
             if (_isBookmarked != isSaved) { _isBookmarked = isSaved; OnPropertyChanged(nameof(IsBookmarked)); }
         }
@@ -335,8 +339,8 @@ namespace EBookStudio.ViewModels
         public void SaveNoteData(NoteItem item)
         {
             item.PageNumber = CurrentPageNum;
-            // [수정] NoteManager 직접 호출 대신 _noteService 사용
-            _noteService.AddItem(_username, _currentBook.Title, item);
+            // [수정] FolderId 사용
+            _noteService.AddItem(_username, _currentBook.FolderId, item);
         }
 
         private async Task LoadAllPagesAsync()
@@ -360,18 +364,17 @@ namespace EBookStudio.ViewModels
                 string baseName = tempBaseName ?? _currentBook.Title ?? "UnknownBook";
                 string jsonFileName = baseName.EndsWith("_full") ? $"{baseName}.json" : $"{baseName}_full.json";
 
-                string localPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", jsonFileName);
+                // [수정] FolderId 사용
+                string localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", jsonFileName);
 
-                // [수정] File.Exists 대신 _fileSystem 사용
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    localPath = FileHelper.GetLocalFilePath(_username, _currentBook.Title, "", _currentBook.FileName);
+                    // 실패 시 파일명으로 재시도
+                    localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", _currentBook.FileName);
                 }
 
-                // [수정] File.Exists 대신 _fileSystem 사용
                 if (_fileSystem.FileExists(localPath))
                 {
-                    // [수정] File.ReadAllTextAsync 대신 _fileSystem 사용
                     string json = await _fileSystem.ReadAllTextAsync(localPath);
                     var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
                     var bookData = JsonSerializer.Deserialize<LocalBookData>(json, options);
@@ -450,7 +453,8 @@ namespace EBookStudio.ViewModels
 
                             if (TotalPages > 0)
                             {
-                                var progress = ReadingProgressManager.GetProgress(_username, _currentBook.Title);
+                                // [수정] FolderId 사용
+                                var progress = ReadingProgressManager.GetProgress(_username, _currentBook.FolderId);
                                 if (progress != null && progress.CurrentPage > 0 && progress.CurrentPage <= TotalPages)
                                 {
                                     if (progress.TotalPages != TotalPages) { CurrentPageNum = 1; }
@@ -458,7 +462,7 @@ namespace EBookStudio.ViewModels
                                 }
                                 else { CurrentPageNum = 1; }
 
-                                if (CurrentPageNum == 1) { ReadingProgressManager.SaveProgress(_username, _currentBook.Title, 1, TotalPages); }
+                                if (CurrentPageNum == 1) { ReadingProgressManager.SaveProgress(_username, _currentBook.FolderId, 1, TotalPages); }
 
                                 UpdateDisplayContent();
                                 CheckCurrentPageStatus();

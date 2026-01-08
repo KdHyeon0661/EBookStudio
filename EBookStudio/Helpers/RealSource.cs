@@ -32,9 +32,9 @@ namespace EBookStudio.Helpers
             return await _apiService.DownloadFileAsync(url, localPath);
         }
 
-        public async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
+        public async Task<List<string>> GetMusicFileListAsync(string username, string bookFolder)
         {
-            return await _apiService.GetMusicFileListAsync(username, bookTitle);
+            return await _apiService.GetMusicFileListAsync(username, bookFolder);
         }
     }
 
@@ -87,7 +87,7 @@ namespace EBookStudio.Helpers
         {
             System.Windows.MessageBox.Show(message);
         }
-        public bool ShowConfirm(string message, string title) // 예/아니오 확인 대화상자 표시
+        public bool ShowConfirm(string message, string title)
         {
             var result = MessageBox.Show(message, title, MessageBoxButton.YesNo, MessageBoxImage.Question);
             return result == MessageBoxResult.Yes;
@@ -96,32 +96,30 @@ namespace EBookStudio.Helpers
 
     public class NoteService : INoteService
     {
-        public (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string u, string t)
+        // [수정] bookTitle -> bookFolder (로컬 파일 저장을 위해)
+        public (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string u, string f)
         {
-            var data = NoteManager.LoadNotes(u, t);
+            var data = NoteManager.LoadNotes(u, f);
             return (data.Bookmarks, data.Highlights, data.Memos);
         }
 
-        public void RemoveItem(string u, string t, NoteItem i)
-            => NoteManager.RemoveItem(u, t, i);
+        public void RemoveItem(string u, string f, NoteItem i)
+            => NoteManager.RemoveItem(u, f, i);
 
-        public void AddItem(string u, string t, NoteItem i)
-        => NoteManager.AddItem(u, t, i);
+        public void AddItem(string u, string f, NoteItem i)
+            => NoteManager.AddItem(u, f, i);
     }
 
     public class BookFileSystem : IBookFileSystem
     {
-        // 파일 관련
         public bool FileExists(string path) => File.Exists(path);
         public Task<string> ReadAllTextAsync(string path) => File.ReadAllTextAsync(path);
         public void DeleteFile(string path) { if (File.Exists(path)) File.Delete(path); }
 
-        // 디렉토리 관련
         public bool DirectoryExists(string path) => Directory.Exists(path);
         public void CreateDirectory(string path) => Directory.CreateDirectory(path);
         public string[] GetDirectories(string path) => Directory.GetDirectories(path);
 
-        // 유저 데이터 초기화 (기존 FileHelper 활용)
         public void ResetUserData(string username) => FileHelper.ResetUserData(username);
     }
 
@@ -151,14 +149,15 @@ namespace EBookStudio.Helpers
         public async Task<List<ServerBook>> GetMyServerBooksAsync(string username)
             => await _apiService.GetMyServerBooksAsync(username);
 
-        public async Task<bool> DeleteServerBookAsync(string bookTitle)
-            => await _apiService.DeleteServerBookAsync(bookTitle);
+        // [수정] bookFolder 전달
+        public async Task<bool> DeleteServerBookAsync(string bookFolder)
+            => await _apiService.DeleteServerBookAsync(bookFolder);
 
         public async Task<bool> DownloadFileAsync(string url, string localPath)
             => await _apiService.DownloadFileAsync(url, localPath);
 
-        public async Task<List<string>> GetMusicFileListAsync(string username, string bookTitle)
-            => await _apiService.GetMusicFileListAsync(username, bookTitle);
+        public async Task<List<string>> GetMusicFileListAsync(string username, string bookFolder)
+            => await _apiService.GetMusicFileListAsync(username, bookFolder);
     }
 
     public class NetworkService : INetworkService
@@ -187,7 +186,6 @@ namespace EBookStudio.Helpers
             set { _lineHeight = value; OnPropertyChanged(); }
         }
 
-        // 인터페이스 호환성을 위한 FontSize (LineHeight와 연결하거나 별도 관리)
         public double FontSize
         {
             get => LineHeight;

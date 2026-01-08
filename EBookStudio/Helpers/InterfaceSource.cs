@@ -1,4 +1,6 @@
 ﻿using EBookStudio.Models;
+using System.Collections.Generic;
+using System.Threading.Tasks;
 using System.Windows.Media;
 
 namespace EBookStudio.Helpers
@@ -14,7 +16,8 @@ namespace EBookStudio.Helpers
         Task<UploadResult> UploadBookAsync(string filePath, string username);
         Task<byte[]> DownloadBytesAsync(string url);
         Task<bool> DownloadFileAsync(string url, string localPath);
-        Task<List<string>> GetMusicFileListAsync(string username, string bookId);
+        // [수정] bookId -> bookFolder
+        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder);
     }
 
     public interface IFilePickerService
@@ -45,9 +48,10 @@ namespace EBookStudio.Helpers
 
     public interface INoteService
     {
-        (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string username, string bookTitle);
-        void RemoveItem(string username, string bookTitle, NoteItem item);
-        void AddItem(string username, string bookTitle, NoteItem item);
+        // [수정] bookTitle -> bookFolder
+        (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string username, string bookFolder);
+        void RemoveItem(string username, string bookFolder, NoteItem item);
+        void AddItem(string username, string bookFolder, NoteItem item);
     }
 
     public interface IBookFileSystem
@@ -68,9 +72,9 @@ namespace EBookStudio.Helpers
         Task<bool> VerifyCodeAsync(string email, string code);
         Task<bool> RegisterAsync(string username, string password, string email);
         Task<List<ServerBook>> GetMyServerBooksAsync(string username);
-        Task<bool> DeleteServerBookAsync(string bookTitle);
+        Task<bool> DeleteServerBookAsync(string bookFolder); // [수정]
         Task<bool> DownloadFileAsync(string url, string localPath);
-        Task<List<string>> GetMusicFileListAsync(string username, string bookTitle);
+        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder); // [수정]
     }
 
     public interface INetworkService
@@ -90,8 +94,8 @@ namespace EBookStudio.Helpers
         Task<UploadResult> UploadBookAsync(string filePath, string username);
         Task<bool> DownloadFileAsync(string url, string localPath);
         Task<byte[]> DownloadBytesAsync(string url);
-        Task<List<string>> GetMusicFileListAsync(string username, string bookTitle);
+        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder); // [수정]
         Task<List<ServerBook>> GetMyServerBooksAsync(string username);
-        Task<bool> DeleteServerBookAsync(string bookTitle);
+        Task<bool> DeleteServerBookAsync(string bookFolder); // [수정]
     }
 }

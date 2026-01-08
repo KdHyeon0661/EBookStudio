@@ -4,7 +4,6 @@ using System.Text.Json;
 
 namespace EBookStudio.Helpers
 {
-    // [모델 통일] 중복된 클래스 제거하고 하나로 통합
     public class ReadingProgress
     {
         public int CurrentPage { get; set; } = 1;
@@ -14,16 +13,12 @@ namespace EBookStudio.Helpers
 
     public static class ReadingProgressManager
     {
-        // [핵심] FileHelper를 통해 경로 통일
-        // 저장 위치: .../DownloadCache/users/아이디/책이름/progress.json
-        private static string GetProgressFilePath(string username, string bookTitle)
+        private static string GetProgressFilePath(string username, string bookFolder)
         {
-            // 카테고리 "" (루트) -> 책 폴더 바로 아래 저장
-            return FileHelper.GetLocalFilePath(username, bookTitle, "", "progress.json");
+            return FileHelper.GetLocalFilePath(username, bookFolder, "", "progress.json");
         }
 
-        // 저장
-        public static void SaveProgress(string username, string bookTitle, int current, int total)
+        public static void SaveProgress(string username, string bookFolder, int current, int total)
         {
             try
             {
@@ -34,9 +29,8 @@ namespace EBookStudio.Helpers
                     LastReadTime = DateTime.Now
                 };
 
-                string path = GetProgressFilePath(username, bookTitle);
+                string path = GetProgressFilePath(username, bookFolder);
 
-                // FileHelper가 폴더는 만들어주지만, 안전을 위해 디렉토리 체크
                 string? dir = Path.GetDirectoryName(path);
                 if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 {
@@ -53,12 +47,11 @@ namespace EBookStudio.Helpers
             }
         }
 
-        // 불러오기
-        public static ReadingProgress? GetProgress(string username, string bookTitle)
+        public static ReadingProgress? GetProgress(string username, string bookFolder)
         {
             try
             {
-                string path = GetProgressFilePath(username, bookTitle);
+                string path = GetProgressFilePath(username, bookFolder);
 
                 if (File.Exists(path))
                 {
@@ -68,15 +61,14 @@ namespace EBookStudio.Helpers
             }
             catch { }
 
-            return null; // 저장된 기록 없음
+            return null;
         }
 
-        // [옵션] 초기화 (필요하다면 구현, 여기서는 파일 삭제로 처리)
-        public static void ResetProgress(string username, string bookTitle)
+        public static void ResetProgress(string username, string bookFolder)
         {
             try
             {
-                string path = GetProgressFilePath(username, bookTitle);
+                string path = GetProgressFilePath(username, bookFolder);
                 if (File.Exists(path)) File.Delete(path);
             }
             catch { }

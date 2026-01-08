@@ -1,5 +1,4 @@
-﻿using System.Collections.Generic;
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 
 namespace EBookStudio.Models
 {
@@ -28,7 +27,6 @@ namespace EBookStudio.Models
         public string text { get; set; } = string.Empty;
         public bool is_new_segment { get; set; }
     }
-
     public class UploadResponse
     {
         public string? message { get; set; }
@@ -36,7 +34,10 @@ namespace EBookStudio.Models
         public string? cover { get; set; }
         public string? author { get; set; }
         public List<string>? music_files { get; set; }
+
         public string? book_title { get; set; }
+        public string? book_folder { get; set; }
+
         public string? job_id { get; set; }
     }
 
@@ -48,7 +49,6 @@ namespace EBookStudio.Models
         [JsonPropertyName("refresh_token")]
         public string? refresh_token { get; set; }
     }
-
     public class UploadResult
     {
         public bool Success { get; set; }
@@ -57,11 +57,14 @@ namespace EBookStudio.Models
         public string? Text { get; set; }
         public string? Author { get; set; }
         public List<string>? MusicFiles { get; set; }
-    }
 
+        public string? BookTitle { get; set; }
+        public string? BookFolder { get; set; }
+    }
     public class ServerBook
     {
         public string title { get; set; } = string.Empty;
+        public string folder { get; set; } = string.Empty;
         public string cover_url { get; set; } = string.Empty;
     }
 }
