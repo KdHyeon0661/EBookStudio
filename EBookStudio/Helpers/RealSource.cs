@@ -141,15 +141,14 @@ namespace EBookStudio.Helpers
         public async Task<bool> VerifyCodeAsync(string e, string c)
             => await _apiService.VerifyCodeAsync(e, c);
 
-        public async Task<bool> RegisterAsync(string u, string p, string e)
+        public async Task<bool> RegisterAsync(string u, string p, string e, string c)
         {
-            return await _apiService.RegisterAsync(u, p, e, "");
+            return await _apiService.RegisterAsync(u, p, e, c);
         }
 
         public async Task<List<ServerBook>> GetMyServerBooksAsync(string username)
             => await _apiService.GetMyServerBooksAsync(username);
 
-        // [수정] bookFolder 전달
         public async Task<bool> DeleteServerBookAsync(string bookFolder)
             => await _apiService.DeleteServerBookAsync(bookFolder);
 

@@ -16,7 +16,6 @@ namespace EBookStudio.Helpers
         Task<UploadResult> UploadBookAsync(string filePath, string username);
         Task<byte[]> DownloadBytesAsync(string url);
         Task<bool> DownloadFileAsync(string url, string localPath);
-        // [수정] bookId -> bookFolder
         Task<List<string>> GetMusicFileListAsync(string username, string bookFolder);
     }
 
@@ -48,7 +47,6 @@ namespace EBookStudio.Helpers
 
     public interface INoteService
     {
-        // [수정] bookTitle -> bookFolder
         (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string username, string bookFolder);
         void RemoveItem(string username, string bookFolder, NoteItem item);
         void AddItem(string username, string bookFolder, NoteItem item);
@@ -70,11 +68,12 @@ namespace EBookStudio.Helpers
         Task<bool> LoginAsync(string username, string password);
         Task<bool> SendVerificationCodeAsync(string email);
         Task<bool> VerifyCodeAsync(string email, string code);
-        Task<bool> RegisterAsync(string username, string password, string email);
+        // [수정] string code 추가됨!
+        Task<bool> RegisterAsync(string username, string password, string email, string code);
         Task<List<ServerBook>> GetMyServerBooksAsync(string username);
-        Task<bool> DeleteServerBookAsync(string bookFolder); // [수정]
+        Task<bool> DeleteServerBookAsync(string bookFolder);
         Task<bool> DownloadFileAsync(string url, string localPath);
-        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder); // [수정]
+        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder);
     }
 
     public interface INetworkService
@@ -94,8 +93,8 @@ namespace EBookStudio.Helpers
         Task<UploadResult> UploadBookAsync(string filePath, string username);
         Task<bool> DownloadFileAsync(string url, string localPath);
         Task<byte[]> DownloadBytesAsync(string url);
-        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder); // [수정]
+        Task<List<string>> GetMusicFileListAsync(string username, string bookFolder);
         Task<List<ServerBook>> GetMyServerBooksAsync(string username);
-        Task<bool> DeleteServerBookAsync(string bookFolder); // [수정]
+        Task<bool> DeleteServerBookAsync(string bookFolder);
     }
 }

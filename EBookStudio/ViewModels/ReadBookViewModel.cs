@@ -209,9 +209,6 @@ namespace EBookStudio.ViewModels
             _currentBook = book;
             _username = mainVM.LoggedInUser;
 
-            // [안전장치] 만약 FolderId가 없다면 Title을 사용 (하위 호환)
-            if (string.IsNullOrEmpty(_currentBook.FolderId)) _currentBook.FolderId = _currentBook.Title;
-
             _fileSystem = fileSystem ?? new BookFileSystem();
             _noteService = noteService ?? new NoteService();
 
@@ -354,23 +351,21 @@ namespace EBookStudio.ViewModels
 
             try
             {
-                if (_currentBook == null || string.IsNullOrEmpty(_currentBook.FileName))
+                // 1. 필수 정보 확인 (FolderId가 핵심)
+                if (_currentBook == null || string.IsNullOrEmpty(_currentBook.FolderId))
                 {
-                    CurrentPageContent = "오류: 책 정보가 올바르지 않습니다.";
+                    CurrentPageContent = "오류: 도서 고유 식별자(FolderId)가 없습니다.";
                     return;
                 }
 
-                string? tempBaseName = Path.GetFileNameWithoutExtension(_currentBook.FileName);
-                string baseName = tempBaseName ?? _currentBook.Title ?? "UnknownBook";
-                string jsonFileName = baseName.EndsWith("_full") ? $"{baseName}.json" : $"{baseName}_full.json";
+                string jsonFileName = _currentBook.FileName;
 
-                // [수정] FolderId 사용
                 string localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", jsonFileName);
 
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    // 실패 시 파일명으로 재시도
-                    localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", _currentBook.FileName);
+                    string fallbackName = $"{_currentBook.FolderId}_full.json";
+                    localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", fallbackName);
                 }
 
                 if (_fileSystem.FileExists(localPath))
@@ -381,9 +376,13 @@ namespace EBookStudio.ViewModels
 
                     if (bookData != null)
                     {
+                        // 작가 정보 업데이트 (기존 로직 유지)
                         if (bookData.book_info != null && !string.IsNullOrEmpty(bookData.book_info.author))
                         {
-                            if (_currentBook.Author != bookData.book_info.author) { _currentBook.Author = bookData.book_info.author; }
+                            if (_currentBook.Author != bookData.book_info.author)
+                            {
+                                _currentBook.Author = bookData.book_info.author;
+                            }
                         }
 
                         if (bookData.chapters != null)
@@ -403,12 +402,12 @@ namespace EBookStudio.ViewModels
                                     _allPages.Add(titlePage);
                                     _pageToChapterMap.Add(chapterIdx);
 
+                                    // 첫 번째 세그먼트의 음악 정보 추출
                                     string firstSegMusic = chapter.segments?.FirstOrDefault()?.music_path
                                         ?? chapter.segments?.FirstOrDefault()?.music_filename
                                         ?? string.Empty;
 
                                     _pageToMusicMap.Add(firstSegMusic);
-
                                     globalPageCounter++;
 
                                     StringBuilder sb = new StringBuilder();
@@ -430,7 +429,6 @@ namespace EBookStudio.ViewModels
                                                         _allPages.Add(sb.ToString());
                                                         _pageToChapterMap.Add(chapterIdx);
                                                         _pageToMusicMap.Add(currentMusic);
-
                                                         globalPageCounter++;
                                                         sb.Clear();
                                                     }
@@ -443,7 +441,6 @@ namespace EBookStudio.ViewModels
                                         _allPages.Add(sb.ToString());
                                         _pageToChapterMap.Add(chapterIdx);
                                         _pageToMusicMap.Add(currentMusic);
-
                                         globalPageCounter++;
                                     }
                                 }
@@ -453,29 +450,48 @@ namespace EBookStudio.ViewModels
 
                             if (TotalPages > 0)
                             {
-                                // [수정] FolderId 사용
+                                // 4. 진도율 로드 (반드시 FolderId 사용)
                                 var progress = ReadingProgressManager.GetProgress(_username, _currentBook.FolderId);
-                                if (progress != null && progress.CurrentPage > 0 && progress.CurrentPage <= TotalPages)
-                                {
-                                    if (progress.TotalPages != TotalPages) { CurrentPageNum = 1; }
-                                    else { CurrentPageNum = progress.CurrentPage; }
-                                }
-                                else { CurrentPageNum = 1; }
 
-                                if (CurrentPageNum == 1) { ReadingProgressManager.SaveProgress(_username, _currentBook.FolderId, 1, TotalPages); }
+                                // 외부 이동(TargetPage) 요청이 있는지 먼저 확인
+                                if (TargetPage > 1 && TargetPage <= TotalPages)
+                                {
+                                    CurrentPageNum = TargetPage;
+                                }
+                                else if (progress != null && progress.CurrentPage > 0 && progress.CurrentPage <= TotalPages)
+                                {
+                                    // 저장된 진도율과 전체 페이지 수가 맞는지 확인 후 이동
+                                    if (progress.TotalPages != TotalPages) CurrentPageNum = 1;
+                                    else CurrentPageNum = progress.CurrentPage;
+                                }
+                                else
+                                {
+                                    CurrentPageNum = 1;
+                                }
+
+                                // 첫 진입 시 진도율 초기 저장
+                                if (CurrentPageNum == 1)
+                                {
+                                    ReadingProgressManager.SaveProgress(_username, _currentBook.FolderId, 1, TotalPages);
+                                }
 
                                 UpdateDisplayContent();
                                 CheckCurrentPageStatus();
-
                                 Application.Current.Dispatcher.Invoke(() => UpdateMusicPlayback());
                             }
                             else { CurrentPageContent = "내용이 없습니다."; }
                         }
                     }
                 }
-                else CurrentPageContent = "책 파일을 찾을 수 없습니다.";
+                else
+                {
+                    CurrentPageContent = "책 파일을 찾을 수 없습니다.";
+                }
             }
-            catch (Exception ex) { CurrentPageContent = $"오류 발생: {ex.Message}"; }
+            catch (Exception ex)
+            {
+                CurrentPageContent = $"오류 발생: {ex.Message}";
+            }
         }
 
         private void UpdateDisplayContent()

@@ -93,8 +93,16 @@ namespace EBookStudio.ViewModels
 
             if (isConfirmed)
             {
+                // 1. 화면(리스트)에서 먼저 지웁니다. (이미지가 사라져야 파일 잠금이 풀림)
+                _allBooks.Remove(book);
+                RefreshList();
+                await SaveLibrary();
+
+                // 2. 이미지가 완전히 해제될 때까지 0.5초만 기다립니다.
+                await Task.Delay(500);
+
+                // 3. 이제 안전하게 폴더를 삭제합니다.
                 string username = _mainVM.LoggedInUser;
-                // [수정] Title 대신 FolderId 사용 (없으면 Title 사용)
                 string folderName = !string.IsNullOrEmpty(book.FolderId) ? book.FolderId : book.Title;
                 string safeUserDir = Path.Combine(FileHelper.UsersBasePath, username, folderName);
 
@@ -104,12 +112,11 @@ namespace EBookStudio.ViewModels
                     {
                         Directory.Delete(safeUserDir, true);
                     }
-                    catch { }
+                    catch
+                    {
+                        // 혹시라도 실패하면 무시 (다음번 실행 때 정리됨)
+                    }
                 }
-
-                _allBooks.Remove(book);
-                RefreshList();
-                await SaveLibrary();
             }
         }
 
@@ -168,10 +175,6 @@ namespace EBookStudio.ViewModels
                                 book.IsAvailable = false;
                             }
 
-                            // [수정] FolderId가 비어있다면 Title로 대체 (하위 호환)
-                            if (string.IsNullOrEmpty(book.FolderId)) book.FolderId = book.Title;
-
-                            // [수정] 진도율 저장 시에도 FolderId 사용
                             var progress = ReadingProgressManager.GetProgress(username, book.FolderId);
 
                             if (progress != null)

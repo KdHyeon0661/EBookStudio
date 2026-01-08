@@ -22,6 +22,11 @@ namespace EBookStudio.Helpers
 
             string finalFolderPath;
 
+            if (string.IsNullOrWhiteSpace(bookFolderId))
+            {
+                return string.Empty;
+            }
+
             if (cat == "music")
             {
                 finalFolderPath = MusicBasePath;
@@ -38,10 +43,10 @@ namespace EBookStudio.Helpers
                 finalFolderPath = string.IsNullOrEmpty(cat) ? userBookDir : Path.Combine(userBookDir, cat);
             }
 
-            if (!Directory.Exists(finalFolderPath))
+            /*if (!Directory.Exists(finalFolderPath))
             {
                 Directory.CreateDirectory(finalFolderPath);
-            }
+            }*/
 
             if (string.IsNullOrEmpty(f))
             {

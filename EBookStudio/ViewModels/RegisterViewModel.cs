@@ -4,13 +4,14 @@ using System.Windows.Controls;
 using System.Threading.Tasks;
 using EBookStudio.Models;
 using EBookStudio.Helpers;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace EBookStudio.ViewModels
 {
     public class RegisterViewModel : ViewModelBase
     {
         private readonly MainViewModel _mainVM;
-        // [추가] 인터페이스 필드
         private readonly IAuthService _authService;
         private readonly IDialogService _dialogService;
 
@@ -51,46 +52,43 @@ namespace EBookStudio.ViewModels
             set { _isVerified = value; OnPropertyChanged(); }
         }
 
+        // [수정] XAML 바인딩 이름과 일치시킴 (ExecuteRegisterCommand -> RegisterCommand)
         public ICommand RegisterCommand { get; }
-        public ICommand BackCommand { get; }
+        public ICommand BackCommand { get; } // GoBackCommand -> BackCommand
         public ICommand SendCodeCommand { get; }
         public ICommand VerifyCodeCommand { get; }
 
-        // [수정] 생성자 주입 방식 (파라미터 추가)
         public RegisterViewModel(MainViewModel mainVM,
                                  IAuthService? authService = null,
                                  IDialogService? dialogService = null)
         {
             _mainVM = mainVM;
-            // 서비스 초기화
             _authService = authService ?? new AuthService();
             _dialogService = dialogService ?? new DialogService();
 
-            BackCommand = new RelayCommand(o => _mainVM.NavigateToLogin());
-            RegisterCommand = new AsyncRelayCommand(async (o) => await ExecuteRegister(o), CanRegister);
             SendCodeCommand = new AsyncRelayCommand(async (o) => await ExecuteSendCode());
             VerifyCodeCommand = new AsyncRelayCommand(async (o) => await ExecuteVerifyCode());
+            RegisterCommand = new AsyncRelayCommand(async (o) => await ExecuteRegister(o));
+            BackCommand = new RelayCommand(o => _mainVM.NavigateToLogin());
         }
 
         private async Task ExecuteSendCode()
         {
             if (string.IsNullOrWhiteSpace(Email) || !Email.Contains("@"))
             {
-                _dialogService.ShowMessage("유효한 이메일 주소를 입력해주세요.");
+                _dialogService.ShowMessage("유효한 이메일을 입력해주세요.");
                 return;
             }
 
-            // [수정] _authService 사용
             bool success = await _authService.SendVerificationCodeAsync(Email);
-
             if (success)
             {
+                _dialogService.ShowMessage("인증번호가 발송되었습니다.");
                 IsEmailSent = true;
-                _dialogService.ShowMessage("인증 코드가 이메일로 발송되었습니다. (가상)");
             }
             else
             {
-                _dialogService.ShowMessage("인증 코드 발송에 실패했습니다. 이메일을 확인하거나 잠시 후 다시 시도해주세요.");
+                _dialogService.ShowMessage("전송 실패: 서버 오류.");
             }
         }
 
@@ -98,43 +96,43 @@ namespace EBookStudio.ViewModels
         {
             if (string.IsNullOrWhiteSpace(VerificationCode))
             {
-                _dialogService.ShowMessage("인증 코드를 입력해주세요.");
+                _dialogService.ShowMessage("인증번호를 입력해주세요.");
                 return;
             }
 
-            // [수정] _authService 사용
             bool success = await _authService.VerifyCodeAsync(Email, VerificationCode);
-
             if (success)
             {
+                _dialogService.ShowMessage("인증되었습니다.");
                 IsVerified = true;
-                _dialogService.ShowMessage("이메일 인증이 완료되었습니다!");
-                CommandManager.InvalidateRequerySuggested();
             }
             else
             {
-                _dialogService.ShowMessage("인증 코드가 일치하지 않거나 만료되었습니다.");
-                IsVerified = false;
+                _dialogService.ShowMessage("인증번호가 틀렸습니다.");
             }
-        }
-
-        private bool CanRegister(object? parameter)
-        {
-            return IsVerified;
         }
 
         private async Task ExecuteRegister(object? parameter)
         {
-            var passwords = parameter as object[];
+            var values = parameter as object[];
+            if (values == null || values.Length < 2) return;
 
-            if (passwords == null || passwords.Length < 2)
+            List<string> passwords = new List<string>();
+
+            foreach (var item in values)
             {
-                _dialogService.ShowMessage("비밀번호 입력 값을 불러올 수 없습니다.");
+                if (item is string s) passwords.Add(s);
+                else if (item is PasswordBox pb) passwords.Add(pb.Password);
+            }
+
+            if (passwords.Count < 2)
+            {
+                _dialogService.ShowMessage("비밀번호 정보를 가져올 수 없습니다.");
                 return;
             }
 
-            string? password = passwords[0] as string;
-            string? confirmPassword = passwords[1] as string;
+            string password = passwords[0];
+            string confirmPassword = passwords[1];
 
             if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(Email) ||
                 string.IsNullOrWhiteSpace(password) || string.IsNullOrWhiteSpace(confirmPassword))
@@ -155,8 +153,7 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            // [수정] _authService 사용
-            bool success = await _authService.RegisterAsync(Username, password, Email);
+            bool success = await _authService.RegisterAsync(Username, password, Email, VerificationCode);
 
             if (success)
             {

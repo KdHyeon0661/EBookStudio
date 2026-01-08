@@ -12,6 +12,21 @@ using EBookStudio.Models;
 
 namespace EBookStudio.ViewModels
 {
+    // [추가] 화면 목록용 아이템 클래스에 Folder 속성 추가
+    public class ServerBookItem : ViewModelBase
+    {
+        public string Title { get; set; } = string.Empty;
+        public string Folder { get; set; } = string.Empty; // [중요] 실제 UUID 폴더명
+        public string CoverUrl { get; set; } = string.Empty;
+
+        private bool _isSelected;
+        public bool IsSelected
+        {
+            get => _isSelected;
+            set { _isSelected = value; OnPropertyChanged(); }
+        }
+    }
+
     public class MyPageViewModel : ViewModelBase
     {
         private readonly IAuthService _authService;
@@ -164,8 +179,23 @@ namespace EBookStudio.ViewModels
 
             foreach (var b in books)
             {
-                ServerDeleteList.Add(new ServerBookItem { Title = b.title, CoverUrl = b.cover_url });
-                ServerDownloadList.Add(new ServerBookItem { Title = b.title, CoverUrl = b.cover_url });
+                // [수정] Folder(UUID) 정보도 같이 저장해야 함
+                var item = new ServerBookItem
+                {
+                    Title = b.title,
+                    Folder = b.folder, // 서버에서 받은 진짜 폴더명 (예: test_pdf_81c13072)
+                    CoverUrl = b.cover_url
+                };
+
+                ServerDeleteList.Add(item);
+
+                // 다운로드 리스트에는 객체를 새로 만들어야 UI 상태(IsSelected 등)가 꼬이지 않음
+                ServerDownloadList.Add(new ServerBookItem
+                {
+                    Title = b.title,
+                    Folder = b.folder,
+                    CoverUrl = b.cover_url
+                });
             }
         }
 
@@ -176,11 +206,12 @@ namespace EBookStudio.ViewModels
 
             foreach (var item in items)
             {
-                bool success = await _authService.DeleteServerBookAsync(item.Title);
+                // [중요 수정] item.Title 대신 item.Folder(UUID)를 보내야 삭제됨
+                bool success = await _authService.DeleteServerBookAsync(item.Folder);
                 if (success)
                 {
                     ServerDeleteList.Remove(item);
-                    var dlItem = ServerDownloadList.FirstOrDefault(x => x.Title == item.Title);
+                    var dlItem = ServerDownloadList.FirstOrDefault(x => x.Folder == item.Folder); // Folder로 비교
                     if (dlItem != null) ServerDownloadList.Remove(dlItem);
                 }
             }
@@ -192,34 +223,39 @@ namespace EBookStudio.ViewModels
             if (items.Count == 0) return;
             foreach (var item in items)
             {
-                await ProcessDownloadBook(item.Title);
+                // [중요 수정] Title 대신 Folder(UUID) 전달
+                await ProcessDownloadBook(item.Folder, item.Title);
             }
             _dialogService.ShowMessage("다운로드가 완료되었습니다.");
         }
 
-        private async Task ProcessDownloadBook(string bookTitle)
+        private async Task ProcessDownloadBook(string bookFolder, string displayTitle)
         {
-            string jsonName = $"{bookTitle}_full.json";
-            string serverJsonUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookTitle}/{jsonName}";
-            string localJsonPath = FileHelper.GetLocalFilePath(Username, bookTitle, "", jsonName);
+            // [중요] 파일명도 이제 UUID 기반입니다. (예: test_pdf_81c13072_full.json)
+            string jsonName = $"{bookFolder}_full.json";
+            string serverJsonUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookFolder}/{jsonName}";
+
+            // 로컬에 저장할 때도 UUID 폴더 안에 UUID 파일명으로 저장
+            string localJsonPath = FileHelper.GetLocalFilePath(Username, bookFolder, "", jsonName);
 
             bool jsonOk = await _authService.DownloadFileAsync(serverJsonUrl, localJsonPath);
             if (!jsonOk) return;
 
-            string coverName = FileHelper.GetCoverFileName(bookTitle);
-            string localCoverPath = FileHelper.GetLocalFilePath(Username, bookTitle, "", coverName);
-            string serverCoverUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookTitle}/{coverName}";
+            // 커버 이미지 다운로드 (파일명 = UUID.png)
+            string coverName = $"{bookFolder}.png";
+            string localCoverPath = FileHelper.GetLocalFilePath(Username, bookFolder, "", coverName);
+            string serverCoverUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookFolder}/{coverName}";
             await _authService.DownloadFileAsync(serverCoverUrl, localCoverPath);
 
-            await DownloadMusicFromList(Username, bookTitle);
+            await DownloadMusicFromList(Username, bookFolder);
         }
 
-        private async Task DownloadMusicFromList(string username, string bookTitle)
+        private async Task DownloadMusicFromList(string username, string bookFolder)
         {
-            var musicFiles = await _authService.GetMusicFileListAsync(username, bookTitle);
+            var musicFiles = await _authService.GetMusicFileListAsync(username, bookFolder);
             if (musicFiles == null || musicFiles.Count == 0) return;
 
-            string tempPath = FileHelper.GetLocalFilePath(username, bookTitle, "music", "temp.wav");
+            string tempPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", "temp.wav");
             string localMusicFolder = Path.GetDirectoryName(tempPath)!;
 
             if (!_fileSystem.DirectoryExists(localMusicFolder))
@@ -230,7 +266,7 @@ namespace EBookStudio.ViewModels
                 string localPath = Path.Combine(localMusicFolder, file);
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookTitle}/music/{file}";
+                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookFolder}/music/{file}";
                     await _authService.DownloadFileAsync(serverUrl, localPath);
                 }
             }
