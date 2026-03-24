@@ -1,7 +1,4 @@
-﻿using System;
-using System.Collections.Generic;
-
-namespace EBookStudio.Models
+﻿namespace EBookStudio.Models
 {
     // 노트 데이터 전체 구조
     public class BookNoteData

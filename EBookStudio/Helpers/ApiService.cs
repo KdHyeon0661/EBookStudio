@@ -145,7 +145,6 @@ namespace EBookStudio.Services
             catch { return Array.Empty<byte>(); }
         }
 
-        // [수정] bookTitle -> bookFolder
         public async Task<List<string>> GetMusicFileListAsync(string username, string bookFolder)
         {
             try

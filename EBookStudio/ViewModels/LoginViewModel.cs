@@ -1,9 +1,7 @@
-﻿using System.Windows;
-using System.Windows.Input;
+﻿using System.Windows.Input;
 using System.Windows.Controls;
 using EBookStudio.Models;
 using EBookStudio.Helpers;
-using System.Threading.Tasks;
 
 namespace EBookStudio.ViewModels
 {

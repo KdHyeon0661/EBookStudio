@@ -28,7 +28,7 @@ namespace EBookStudio.Helpers
         public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture) => throw new NotImplementedException();
     }
 
-    // [신규] 3. True -> Collapsed, False -> Visible (로그인 안 된 상태용)
+    // 3. True -> Collapsed, False -> Visible (로그인 안 된 상태용)
     public class InverseBoolToVisibilityConverter : IValueConverter
     {
         public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
