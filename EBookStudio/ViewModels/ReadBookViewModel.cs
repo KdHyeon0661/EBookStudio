@@ -1,12 +1,12 @@
-﻿using EBookStudio.Helpers;
+using EBookStudio.Helpers;
 using EBookStudio.Models;
+using EBookStudio.Services;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Text;
 using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
-using System.Windows.Media;
 using System.Windows.Threading;
 
 namespace EBookStudio.ViewModels
@@ -19,6 +19,11 @@ namespace EBookStudio.ViewModels
 
         private readonly IBookFileSystem _fileSystem;
         private readonly INoteService _noteService;
+        private readonly IAudioPlaybackService _audioPlayback;
+        private readonly UsageSession? _readingUsageSession;
+        private readonly DispatcherTimer _usageTimer = new DispatcherTimer();
+        private bool _activityReady;
+        private bool _readerClosed;
 
         public string CurrentUser => _username;
         public int TargetPage { get; set; } = 1;
@@ -27,8 +32,6 @@ namespace EBookStudio.ViewModels
         private List<int> _pageToChapterMap = new List<int>();
         private Dictionary<int, int> _chapterStartPageMap = new Dictionary<int, int>();
 
-        private readonly MediaPlayer _mediaPlayer = new MediaPlayer();
-        private readonly DispatcherTimer _timer = new DispatcherTimer();
         private string _currentPlayingMusic = string.Empty;
         private List<string> _pageToMusicMap = new List<string>();
 
@@ -49,14 +52,12 @@ namespace EBookStudio.ViewModels
                     {
                         if (_isMusicEnabled)
                         {
-                            _mediaPlayer.Play();
-                            _timer.Start();
+                            _audioPlayback.Play();
                         }
                     }
                     else
                     {
-                        _mediaPlayer.Pause();
-                        _timer.Stop();
+                        _audioPlayback.Pause();
                     }
                 }
             }
@@ -88,7 +89,7 @@ namespace EBookStudio.ViewModels
                     OnPropertyChanged();
                     if (!_isTimerUpdating)
                     {
-                        _mediaPlayer.Position = TimeSpan.FromSeconds(_currentPosition);
+                        _audioPlayback.Seek(_currentPosition);
                     }
                 }
             }
@@ -102,6 +103,7 @@ namespace EBookStudio.ViewModels
         }
 
         public string BookTitle => _currentBook?.Title ?? "제목 없음";
+        public string BookFolderId => _currentBook?.FolderId ?? string.Empty;
 
         private string _currentPageContent = "로딩 중...";
         public string CurrentPageContent
@@ -135,6 +137,8 @@ namespace EBookStudio.ViewModels
                         // [수정] FolderId 사용
                         string targetId = !string.IsNullOrEmpty(_currentBook.FolderId) ? _currentBook.FolderId : _currentBook.Title;
                         ReadingProgressManager.SaveProgress(_username, targetId, _currentPageNum, TotalPages);
+                        if (_activityReady)
+                            _readingUsageSession?.RecordPageChange(_currentPageNum, TotalPages);
                     }
                 }
             }
@@ -203,7 +207,9 @@ namespace EBookStudio.ViewModels
         public ICommand OpenSettingCommand { get; }
         public ICommand ToggleBookmarkCommand { get; }
 
-        public ReadBookViewModel(MainViewModel mainVM, Book book, IBookFileSystem? fileSystem = null, INoteService? noteService = null)
+        public ReadBookViewModel(MainViewModel mainVM, Book book, IBookFileSystem? fileSystem = null,
+                                 INoteService? noteService = null,
+                                 IAudioPlaybackService? audioPlayback = null)
         {
             _mainVM = mainVM;
             _currentBook = book;
@@ -211,6 +217,16 @@ namespace EBookStudio.ViewModels
 
             _fileSystem = fileSystem ?? new BookFileSystem();
             _noteService = noteService ?? new NoteService();
+            _audioPlayback = audioPlayback ?? new AudioPlaybackService();
+            _readingUsageSession = UsageActivityStore.StartSession(
+                _username, "reading_session", _currentBook.FolderId);
+            _usageTimer.Interval = TimeSpan.FromSeconds(15);
+            _usageTimer.Tick += (s, e) =>
+            {
+                if (Application.Current.MainWindow?.IsActive == true)
+                    _readingUsageSession?.AddActiveSeconds(15, CurrentPageNum, TotalPages);
+            };
+            _usageTimer.Start();
 
             NextPageCommand = new RelayCommand(o => { if (CurrentPageNum < TotalPages) CurrentPageNum++; });
             PrevPageCommand = new RelayCommand(o => { if (CurrentPageNum > 1) CurrentPageNum--; });
@@ -218,14 +234,17 @@ namespace EBookStudio.ViewModels
 
             CloseCommand = new RelayCommand(o =>
             {
-                _mediaPlayer.Stop();
-                _timer.Stop();
+                OnReaderClosed();
                 _mainVM.NavigateToHome();
             });
 
             ToggleMusicCommand = new RelayCommand(o => IsMusicPlaying = !IsMusicPlaying);
             ToggleTocCommand = new RelayCommand(o => IsTocVisible = !IsTocVisible);
-            OpenNoteCommand = new RelayCommand(o => { _mainVM.CurrentView = new NoteViewModel(_mainVM, _currentBook, CurrentPageNum); });
+            OpenNoteCommand = new RelayCommand(o =>
+            {
+                OnReaderClosed();
+                _mainVM.CurrentView = new NoteViewModel(_mainVM, _currentBook, CurrentPageNum);
+            });
             OpenSettingCommand = new RelayCommand(o => { });
 
             ToggleBookmarkCommand = new RelayCommand(o =>
@@ -238,25 +257,24 @@ namespace EBookStudio.ViewModels
                 else _noteService.RemoveItem(_username, _currentBook.FolderId, item);
             });
 
-            _mediaPlayer.MediaEnded += (s, e) =>
+            _audioPlayback.ProgressChanged += (position, duration) =>
             {
-                _mediaPlayer.Position = TimeSpan.Zero;
-                _mediaPlayer.Play();
-            };
-
-            _timer.Interval = TimeSpan.FromSeconds(0.5);
-            _timer.Tick += (s, e) =>
-            {
-                if (_mediaPlayer.Source != null && _mediaPlayer.NaturalDuration.HasTimeSpan)
-                {
-                    _isTimerUpdating = true;
-                    TotalDuration = _mediaPlayer.NaturalDuration.TimeSpan.TotalSeconds;
-                    CurrentPosition = _mediaPlayer.Position.TotalSeconds;
-                    _isTimerUpdating = false;
-                }
+                _isTimerUpdating = true;
+                TotalDuration = duration;
+                CurrentPosition = position;
+                _isTimerUpdating = false;
             };
 
             _ = LoadAllPagesAsync();
+        }
+
+        public void OnReaderClosed()
+        {
+            if (_readerClosed) return;
+            _readerClosed = true;
+            _usageTimer.Stop();
+            _readingUsageSession?.Complete(CurrentPageNum, TotalPages);
+            _audioPlayback.Dispose();
         }
 
         private void UpdateMusicPlayback()
@@ -264,7 +282,7 @@ namespace EBookStudio.ViewModels
             if (!IsMusicEnabled)
             {
                 if (IsMusicPlaying) IsMusicPlaying = false;
-                _mediaPlayer.Stop();
+                _audioPlayback.Stop();
                 return;
             }
 
@@ -275,8 +293,8 @@ namespace EBookStudio.ViewModels
             if (string.IsNullOrEmpty(targetMusic))
             {
                 if (IsMusicPlaying) IsMusicPlaying = false;
-                _mediaPlayer.Stop();
-                _mediaPlayer.Close();
+                _audioPlayback.Stop();
+                _audioPlayback.Close();
                 _currentPlayingMusic = string.Empty;
                 return;
             }
@@ -299,13 +317,8 @@ namespace EBookStudio.ViewModels
 
                 if (_fileSystem.FileExists(musicPath))
                 {
-                    _mediaPlayer.Stop();
-                    _mediaPlayer.Close();
-
-                    _mediaPlayer.Open(new Uri(musicPath, UriKind.Absolute));
-
-                    _mediaPlayer.Play();
-                    _timer.Start();
+                    _audioPlayback.Open(musicPath);
+                    _audioPlayback.Play();
 
                     _currentPlayingMusic = targetMusic;
 
@@ -333,10 +346,17 @@ namespace EBookStudio.ViewModels
             if (_isBookmarked != isSaved) { _isBookmarked = isSaved; OnPropertyChanged(nameof(IsBookmarked)); }
         }
 
+        public (IReadOnlyList<NoteItem> Highlights, IReadOnlyList<NoteItem> Memos) GetCurrentPageAnnotations()
+        {
+            var notes = _noteService.LoadNotes(_username, _currentBook.FolderId);
+            return (
+                notes.Highlights.Where(item => item.PageNumber == CurrentPageNum).ToList(),
+                notes.Memos.Where(item => item.PageNumber == CurrentPageNum).ToList());
+        }
+
         public void SaveNoteData(NoteItem item)
         {
             item.PageNumber = CurrentPageNum;
-            // [수정] FolderId 사용
             _noteService.AddItem(_username, _currentBook.FolderId, item);
         }
 
@@ -364,8 +384,11 @@ namespace EBookStudio.ViewModels
 
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    string fallbackName = $"{_currentBook.FolderId}_full.json";
-                    localPath = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", fallbackName);
+                    string bookDirectory = FileHelper.GetLocalFilePath(_username, _currentBook.FolderId, "", "");
+                    string? discovered = Directory.Exists(bookDirectory)
+                        ? Directory.GetFiles(bookDirectory, "*_full.json").FirstOrDefault()
+                        : null;
+                    if (!string.IsNullOrEmpty(discovered)) localPath = discovered;
                 }
 
                 if (_fileSystem.FileExists(localPath))
@@ -403,45 +426,47 @@ namespace EBookStudio.ViewModels
                                     _pageToChapterMap.Add(chapterIdx);
 
                                     // 첫 번째 세그먼트의 음악 정보 추출
-                                    string firstSegMusic = chapter.segments?.FirstOrDefault()?.music_path
-                                        ?? chapter.segments?.FirstOrDefault()?.music_filename
-                                        ?? string.Empty;
+                                    var firstSegment = chapter.segments?.FirstOrDefault();
+                                    string firstSegMusic = !string.IsNullOrWhiteSpace(firstSegment?.music_path)
+                                        ? firstSegment.music_path
+                                        : firstSegment?.music_filename ?? string.Empty;
 
                                     _pageToMusicMap.Add(firstSegMusic);
                                     globalPageCounter++;
-
-                                    StringBuilder sb = new StringBuilder();
-                                    string currentMusic = firstSegMusic;
 
                                     if (chapter.segments != null)
                                     {
                                         foreach (var seg in chapter.segments)
                                         {
-                                            currentMusic = seg.music_path ?? seg.music_filename ?? string.Empty;
-
+                                            string segmentMusic = !string.IsNullOrWhiteSpace(seg.music_path)
+                                                ? seg.music_path
+                                                : seg.music_filename ?? string.Empty;
+                                            StringBuilder segmentTextBuilder = new StringBuilder();
                                             if (seg.pages != null)
                                             {
                                                 foreach (var page in seg.pages)
                                                 {
-                                                    sb.Append(page.text).Append("\n\n");
-                                                    if (sb.Length >= charLimit)
-                                                    {
-                                                        _allPages.Add(sb.ToString());
-                                                        _pageToChapterMap.Add(chapterIdx);
-                                                        _pageToMusicMap.Add(currentMusic);
-                                                        globalPageCounter++;
-                                                        sb.Clear();
-                                                    }
+                                                    if (!string.IsNullOrWhiteSpace(page.text))
+                                                        segmentTextBuilder.Append(page.text.Trim()).Append("\n\n");
                                                 }
                                             }
+
+                                            string segmentText = segmentTextBuilder.ToString().Trim();
+                                            int offset = 0;
+                                            while (offset < segmentText.Length)
+                                            {
+                                                int length = Math.Min(charLimit, segmentText.Length - offset);
+                                                string readerPage = segmentText.Substring(offset, length).Trim();
+                                                if (!string.IsNullOrEmpty(readerPage))
+                                                {
+                                                    _allPages.Add(readerPage);
+                                                    _pageToChapterMap.Add(chapterIdx);
+                                                    _pageToMusicMap.Add(segmentMusic);
+                                                    globalPageCounter++;
+                                                }
+                                                offset += length;
+                                            }
                                         }
-                                    }
-                                    if (sb.Length > 0)
-                                    {
-                                        _allPages.Add(sb.ToString());
-                                        _pageToChapterMap.Add(chapterIdx);
-                                        _pageToMusicMap.Add(currentMusic);
-                                        globalPageCounter++;
                                     }
                                 }
                             });
@@ -475,6 +500,8 @@ namespace EBookStudio.ViewModels
                                     ReadingProgressManager.SaveProgress(_username, _currentBook.FolderId, 1, TotalPages);
                                 }
 
+                                _readingUsageSession?.SetProgress(CurrentPageNum, TotalPages);
+                                _activityReady = true;
                                 UpdateDisplayContent();
                                 CheckCurrentPageStatus();
                                 Application.Current.Dispatcher.Invoke(() => UpdateMusicPlayback());

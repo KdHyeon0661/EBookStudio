@@ -1,7 +1,8 @@
-﻿using System.Windows.Input;
+using System.Windows.Input;
 using System.Windows.Controls;
 using EBookStudio.Models;
 using EBookStudio.Helpers;
+using EBookStudio.Services;
 
 namespace EBookStudio.ViewModels
 {
@@ -51,9 +52,9 @@ namespace EBookStudio.ViewModels
             }
 
             // [수정] ApiService -> _authService
-            bool success = await _authService.LoginAsync(Username, password);
+            ApiResult result = await _authService.LoginAsync(Username, password);
 
-            if (success)
+            if (result.Success)
             {
                 // [수정] MessageBox -> _dialogService
                 _dialogService.ShowMessage($"로그인 성공! 환영합니다 {Username}님.");
@@ -62,7 +63,7 @@ namespace EBookStudio.ViewModels
             else
             {
                 // [수정] MessageBox -> _dialogService
-                _dialogService.ShowMessage("로그인 실패: 아이디 또는 비밀번호가 틀립니다.");
+                _dialogService.ShowMessage($"로그인 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
             }
         }
 

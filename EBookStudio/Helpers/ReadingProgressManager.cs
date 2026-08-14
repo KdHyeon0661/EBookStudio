@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Text.Json;
 
@@ -31,15 +31,9 @@ namespace EBookStudio.Helpers
 
                 string path = GetProgressFilePath(username, bookFolder);
 
-                string? dir = Path.GetDirectoryName(path);
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 string json = JsonSerializer.Serialize(progress, options);
-                File.WriteAllText(path, json);
+                AtomicFile.WriteAllText(path, json);
             }
             catch (Exception ex)
             {

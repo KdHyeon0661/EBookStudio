@@ -1,8 +1,10 @@
-﻿using System;
+using System;
+using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
 using System.Threading.Tasks;
 using EBookStudio.Helpers;
+using EBookStudio.Services;
 using EBookStudio.Models;
 
 namespace EBookStudio.ViewModels
@@ -12,6 +14,9 @@ namespace EBookStudio.ViewModels
         // [추가] ReadBookViewModel에 주입할 서비스 객체들
         private readonly IBookFileSystem _fileSystem;
         private readonly INoteService _noteService;
+        private readonly IUsageService _usageService;
+        private UsageSession? _appUsageSession;
+        private string _usageUsername = string.Empty;
 
         // ==========================================
         // 1. 상태 관리 변수
@@ -81,6 +86,7 @@ namespace EBookStudio.ViewModels
         public MyPageViewModel MyPageVM { get; set; }
 
         private DispatcherTimer _networkTimer;
+        private readonly DispatcherTimer _usageTimer;
 
         // ==========================================
         // 3. 명령어 (Commands)
@@ -100,6 +106,16 @@ namespace EBookStudio.ViewModels
             // 사용자님의 클래스명이 BookFileSystem, NoteService가 맞는지 꼭 확인하십시오.
             _fileSystem = new BookFileSystem();
             _noteService = new NoteService();
+            _usageService = new UsageSyncService();
+
+            _usageTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
+            _usageTimer.Tick += (s, e) =>
+            {
+                if (Application.Current.MainWindow?.IsActive == true)
+                    _appUsageSession?.AddActiveSeconds(15);
+            };
+            _usageTimer.Start();
+            Application.Current.Exit += (s, e) => FinishAppUsageSession();
 
             _networkTimer = new DispatcherTimer();
             _networkTimer.Interval = TimeSpan.FromSeconds(3);
@@ -115,12 +131,14 @@ namespace EBookStudio.ViewModels
             MyPageVM = new MyPageViewModel(string.Empty);
 
             MyPageVM.RequestLogout += () => Logout();
+            MyPageVM.RequestLibraryImport += item => _ = LibraryVM.ImportDownloadedBook(item);
 
             string? lastUser = FileHelper.GetLastUser();
             if (!string.IsNullOrEmpty(lastUser))
             {
                 LoggedInUser = lastUser;
                 MyPageVM.Username = lastUser;
+                StartUsageForUser(lastUser);
                 _ = LibraryVM.LoadLibrary();
             }
 
@@ -155,6 +173,11 @@ namespace EBookStudio.ViewModels
             if (IsNetworkAvailable != isConnected)
             {
                 IsNetworkAvailable = isConnected;
+                if (isConnected && IsLoggedIn && !string.IsNullOrWhiteSpace(LoggedInUser))
+                {
+                    RotateAppUsageSession();
+                    await _usageService.SyncAsync(LoggedInUser);
+                }
             }
         }
 
@@ -192,8 +215,10 @@ namespace EBookStudio.ViewModels
         public void NavigateToMyPage()
         {
             IsTopBarVisible = true;
+            RotateAppUsageSession();
             MyPageVM.Username = LoggedInUser;
             CurrentView = MyPageVM;
+            _ = MyPageVM.RefreshUsageAsync();
             IsAuthView = true;
         }
 
@@ -212,18 +237,51 @@ namespace EBookStudio.ViewModels
             LoggedInUser = username;
             MyPageVM.Username = username;
             FileHelper.SaveLastUser(username);
+            StartUsageForUser(username);
+            _ = _usageService.SyncAsync(username);
             _ = LibraryVM.LoadLibrary();
             NavigateToHome();
         }
 
         public void Logout()
         {
+            FinishAppUsageSession();
+            LibraryVM.StopMonitoring();
+            _ = new AuthService().LogoutAsync();
+            FileHelper.SaveLastUser(string.Empty);
             IsTopBarVisible = true;
             IsLoggedIn = false;
             LoggedInUser = string.Empty;
             MyPageVM.Username = string.Empty;
             _ = LibraryVM.LoadLibrary();
             NavigateToHome();
+        }
+
+        private void StartUsageForUser(string username)
+        {
+            if (string.IsNullOrWhiteSpace(username)) return;
+            if (_appUsageSession != null && string.Equals(_usageUsername, username, StringComparison.Ordinal))
+                return;
+            FinishAppUsageSession();
+            UsageActivityStore.RecoverInterruptedSessions(username);
+            _usageUsername = username;
+            _appUsageSession = UsageActivityStore.StartSession(username, "app_session");
+        }
+
+        private void RotateAppUsageSession()
+        {
+            string username = _usageUsername;
+            if (string.IsNullOrWhiteSpace(username)) return;
+            FinishAppUsageSession();
+            _usageUsername = username;
+            _appUsageSession = UsageActivityStore.StartSession(username, "app_session");
+        }
+
+        private void FinishAppUsageSession()
+        {
+            _appUsageSession?.Complete();
+            _appUsageSession = null;
+            _usageUsername = string.Empty;
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using EBookStudio.Helpers;
+using EBookStudio.Helpers;
 
 namespace EBookStudio.Models
 {
@@ -12,8 +12,11 @@ namespace EBookStudio.Models
         }
 
         public string Title { get; set; } = string.Empty;
-        public string FolderId { get; set; } = string.Empty;
+        public string Folder { get; set; } = string.Empty;
         public string CoverUrl { get; set; } = string.Empty;
+        public string CoverFile { get; set; } = string.Empty;
+        public string TextFile { get; set; } = string.Empty;
+        public string Author { get; set; } = string.Empty;
 
         public string DisplayCoverUrl => string.IsNullOrEmpty(CoverUrl)
             ? "/Images/default_cover.png"

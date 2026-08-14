@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
@@ -8,37 +8,50 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using EBookStudio.Helpers;
+using EBookStudio.Services;
 using EBookStudio.Models;
 
 namespace EBookStudio.ViewModels
 {
-    // [추가] 화면 목록용 아이템 클래스에 Folder 속성 추가
-    public class ServerBookItem : ViewModelBase
-    {
-        public string Title { get; set; } = string.Empty;
-        public string Folder { get; set; } = string.Empty; // [중요] 실제 UUID 폴더명
-        public string CoverUrl { get; set; } = string.Empty;
-
-        private bool _isSelected;
-        public bool IsSelected
-        {
-            get => _isSelected;
-            set { _isSelected = value; OnPropertyChanged(); }
-        }
-    }
 
     public class MyPageViewModel : ViewModelBase
     {
         private readonly IAuthService _authService;
         private readonly IDialogService _dialogService;
         private readonly IBookFileSystem _fileSystem;
+        private readonly IUsageService _usageService;
 
         private string _username = string.Empty;
         public string Username
         {
             get => _username;
-            set { _username = value; OnPropertyChanged(); }
+            set
+            {
+                if (string.Equals(_username, value, StringComparison.Ordinal)) return;
+                _username = value;
+                OnPropertyChanged();
+                TotalAppUsage = "0분";
+                TotalReadingUsage = "0분";
+                ReadingSessions = "0회";
+                BooksRead = "0권";
+                UsageStatus = string.IsNullOrWhiteSpace(value) ? "로그인 후 확인할 수 있습니다." : "동기화 대기 중";
+            }
         }
+
+        private string _totalAppUsage = "0분";
+        public string TotalAppUsage { get => _totalAppUsage; private set { _totalAppUsage = value; OnPropertyChanged(); } }
+
+        private string _totalReadingUsage = "0분";
+        public string TotalReadingUsage { get => _totalReadingUsage; private set { _totalReadingUsage = value; OnPropertyChanged(); } }
+
+        private string _readingSessions = "0회";
+        public string ReadingSessions { get => _readingSessions; private set { _readingSessions = value; OnPropertyChanged(); } }
+
+        private string _booksRead = "0권";
+        public string BooksRead { get => _booksRead; private set { _booksRead = value; OnPropertyChanged(); } }
+
+        private string _usageStatus = "동기화 대기 중";
+        public string UsageStatus { get => _usageStatus; private set { _usageStatus = value; OnPropertyChanged(); } }
 
         private bool _isDarkMode;
         public bool IsDarkMode
@@ -58,6 +71,7 @@ namespace EBookStudio.ViewModels
 
         public string AppVersion => "v1.0.0 (Build 2025)";
         public event Action? RequestLogout;
+        public event Action<ServerBookItem>? RequestLibraryImport;
 
         public ObservableCollection<ServerBookItem> ServerDeleteList { get; } = new ObservableCollection<ServerBookItem>();
         public ObservableCollection<ServerBookItem> ServerDownloadList { get; } = new ObservableCollection<ServerBookItem>();
@@ -71,18 +85,22 @@ namespace EBookStudio.ViewModels
         public ICommand DeleteSingleServerBookCommand { get; }
         public ICommand DownloadServerBooksCommand { get; }
         public ICommand DownloadSingleServerBookCommand { get; }
+        public ICommand RefreshUsageCommand { get; }
 
         public MyPageViewModel(string username,
                                IAuthService? authService = null,
                                IDialogService? dialogService = null,
-                               IBookFileSystem? fileSystem = null)
+                               IBookFileSystem? fileSystem = null,
+                               IUsageService? usageService = null)
         {
             Username = username;
             _authService = authService ?? new AuthService();
             _dialogService = dialogService ?? new DialogService();
             _fileSystem = fileSystem ?? new BookFileSystem();
+            _usageService = usageService ?? new UsageSyncService();
 
-            ChangePasswordCommand = new RelayCommand(ExecuteChangePassword);
+            ChangePasswordCommand = new AsyncRelayCommand(async o => await ExecuteChangePassword(o));
+            RefreshUsageCommand = new AsyncRelayCommand(async o => await RefreshUsageAsync());
             ResetHistoryCommand = new RelayCommand(ExecuteResetHistory);
             ResetUserDataCommand = new RelayCommand(ExecuteResetUserData);
 
@@ -112,19 +130,54 @@ namespace EBookStudio.ViewModels
             });
         }
 
-        private void ExecuteChangePassword(object? parameter)
+        public async Task RefreshUsageAsync()
+        {
+            if (string.IsNullOrWhiteSpace(Username)) return;
+            UsageStatus = "동기화 중...";
+            ApiResult<UsageSummaryResponse> result = await _usageService.GetSummaryAsync(Username);
+            if (!result.Success || result.Value == null)
+            {
+                UsageStatus = "오프라인 · 기록은 기기에 안전하게 대기 중";
+                return;
+            }
+            TotalAppUsage = FormatDuration(result.Value.TotalAppSeconds);
+            TotalReadingUsage = FormatDuration(result.Value.TotalReadingSeconds);
+            ReadingSessions = $"{result.Value.ReadingSessionCount:N0}회";
+            BooksRead = $"{result.Value.BooksReadCount:N0}권";
+            UsageStatus = result.Value.IsCached
+                ? "오프라인 · 마지막으로 동기화된 통계"
+                : $"최근 7일 {FormatDuration(result.Value.Last7DaysAppSeconds)} · "
+                    + $"활동 {result.Value.ActiveDayCount:N0}일";
+        }
+
+        private static string FormatDuration(long seconds)
+        {
+            if (seconds < 60) return $"{seconds}초";
+            long hours = seconds / 3600;
+            long minutes = seconds % 3600 / 60;
+            return hours > 0 ? $"{hours}시간 {minutes}분" : $"{minutes}분";
+        }
+
+        private async Task ExecuteChangePassword(object? parameter)
         {
             var boxes = parameter as object[];
-            if (boxes == null || boxes.Length < 2) return;
-            var newBox = boxes[0] as PasswordBox;
-            var confirmBox = boxes[1] as PasswordBox;
+            if (boxes == null || boxes.Length < 3) return;
+            var currentBox = boxes[0] as PasswordBox;
+            var newBox = boxes[1] as PasswordBox;
+            var confirmBox = boxes[2] as PasswordBox;
+            if (currentBox == null || newBox == null || confirmBox == null) return;
+            if (string.IsNullOrWhiteSpace(currentBox.Password) || string.IsNullOrWhiteSpace(newBox.Password))
+            { _dialogService.ShowMessage("현재 비밀번호와 새 비밀번호를 입력해주세요."); return; }
+            if (newBox.Password.Length < 8)
+            { _dialogService.ShowMessage("새 비밀번호는 8자 이상이어야 합니다."); return; }
+            if (newBox.Password != confirmBox.Password)
+            { _dialogService.ShowMessage("비밀번호 확인이 일치하지 않습니다."); return; }
 
-            if (newBox == null || confirmBox == null) return;
-            if (string.IsNullOrWhiteSpace(newBox.Password)) { _dialogService.ShowMessage("새 비밀번호를 입력해주세요."); return; }
-            if (newBox.Password != confirmBox.Password) { _dialogService.ShowMessage("비밀번호 확인이 일치하지 않습니다."); return; }
-
-            _dialogService.ShowMessage("비밀번호가 변경되었습니다. (서버 연동 필요)");
-            newBox.Password = ""; confirmBox.Password = "";
+            ApiResult result = await _authService.ChangePasswordAsync(currentBox.Password, newBox.Password);
+            if (!result.Success)
+            { _dialogService.ShowMessage($"비밀번호 변경 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}"); return; }
+            currentBox.Password = ""; newBox.Password = ""; confirmBox.Password = "";
+            _dialogService.ShowMessage("비밀번호가 변경되었습니다.");
         }
 
         private void ExecuteResetHistory(object? obj)
@@ -133,7 +186,7 @@ namespace EBookStudio.ViewModels
             {
                 try
                 {
-                    string userDir = Path.Combine(FileHelper.UsersBasePath, Username);
+                    string userDir = FileHelper.GetUserDirectory(Username);
                     if (_fileSystem.DirectoryExists(userDir))
                     {
                         var bookDirs = _fileSystem.GetDirectories(userDir);
@@ -156,35 +209,63 @@ namespace EBookStudio.ViewModels
         {
             if (_dialogService.ShowConfirm("보관함을 완전히 비우시겠습니까?\n내 컴퓨터의 모든 책 파일이 삭제됩니다.", "경고"))
             {
-                _fileSystem.ResetUserData(Username);
-                _dialogService.ShowMessage("보관함이 비워졌습니다.");
+                try
+                {
+                    _fileSystem.ResetUserData(Username);
+                    _dialogService.ShowMessage("보관함이 비워졌습니다.");
+                }
+                catch (IOException error)
+                {
+                    _dialogService.ShowMessage(error.Message);
+                }
             }
         }
 
         private async Task ExecuteDeleteAccount()
         {
-            if (_dialogService.ShowConfirm("정말로 탈퇴하시겠습니까?\n계정이 즉시 삭제됩니다.", "탈퇴"))
+            if (!_dialogService.ShowConfirm("정말로 탈퇴하시겠습니까?\n서버 계정과 모든 도서가 삭제되며 복구할 수 없습니다.", "탈퇴"))
+                return;
+            ApiResult result = await _authService.DeleteAccountAsync();
+            if (!result.Success)
             {
-                _fileSystem.ResetUserData(Username);
-                _dialogService.ShowMessage("탈퇴되었습니다.");
-                RequestLogout?.Invoke();
+                _dialogService.ShowMessage($"계정 삭제 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
+                return;
+            }
+            string deletedUsername = Username;
+            RequestLogout?.Invoke();
+            try
+            {
+                _fileSystem.ResetUserData(deletedUsername);
+                _dialogService.ShowMessage("계정과 서버 데이터가 삭제되었습니다.");
+            }
+            catch (IOException error)
+            {
+                _dialogService.ShowMessage($"서버 계정은 삭제됐지만 로컬 파일 정리에 실패했습니다.\n{error.Message}");
             }
         }
 
         private async Task LoadServerBooks()
         {
-            var books = await _authService.GetMyServerBooksAsync(Username);
+            ApiResult<List<ServerBook>> result = await _authService.GetMyServerBooksAsync(Username);
+            if (!result.Success)
+            {
+                _dialogService.ShowMessage($"서버 보관함 조회 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
+                return;
+            }
             ServerDeleteList.Clear();
             ServerDownloadList.Clear();
 
-            foreach (var b in books)
+            foreach (var b in result.Value ?? new List<ServerBook>())
             {
                 // [수정] Folder(UUID) 정보도 같이 저장해야 함
                 var item = new ServerBookItem
                 {
                     Title = b.title,
-                    Folder = b.folder, // 서버에서 받은 진짜 폴더명 (예: test_pdf_81c13072)
-                    CoverUrl = b.cover_url
+                    Folder = b.folder,
+                    CoverUrl = b.cover_url,
+                    CoverFile = b.cover_file,
+                    TextFile = b.text_file,
+                    Author = b.author
                 };
 
                 ServerDeleteList.Add(item);
@@ -194,7 +275,10 @@ namespace EBookStudio.ViewModels
                 {
                     Title = b.title,
                     Folder = b.folder,
-                    CoverUrl = b.cover_url
+                    CoverUrl = b.cover_url,
+                    CoverFile = b.cover_file,
+                    TextFile = b.text_file,
+                    Author = b.author
                 });
             }
         }
@@ -204,56 +288,85 @@ namespace EBookStudio.ViewModels
             if (items.Count == 0) return;
             if (!_dialogService.ShowConfirm($"{items.Count}개의 책을 서버에서 삭제하시겠습니까?\n(음악 파일은 보존됩니다)", "서버 삭제")) return;
 
+            int succeeded = 0;
+            ApiError? lastError = null;
             foreach (var item in items)
             {
-                // [중요 수정] item.Title 대신 item.Folder(UUID)를 보내야 삭제됨
-                bool success = await _authService.DeleteServerBookAsync(item.Folder);
-                if (success)
+                ApiResult result = await _authService.DeleteServerBookAsync(item.Folder);
+                if (result.Success)
                 {
+                    succeeded++;
                     ServerDeleteList.Remove(item);
-                    var dlItem = ServerDownloadList.FirstOrDefault(x => x.Folder == item.Folder); // Folder로 비교
+                    var dlItem = ServerDownloadList.FirstOrDefault(x => x.Folder == item.Folder);
                     if (dlItem != null) ServerDownloadList.Remove(dlItem);
                 }
+                else
+                {
+                    lastError = result.Error;
+                }
             }
-            _dialogService.ShowMessage("삭제 처리 완료");
+            string message = $"{succeeded}/{items.Count}개 도서를 서버에서 삭제했습니다.";
+            if (lastError != null) message += $"\n실패 원인: {lastError.UserMessage}";
+            _dialogService.ShowMessage(message);
         }
 
         private async Task ExecuteDownloadServerBooks(List<ServerBookItem> items)
         {
             if (items.Count == 0) return;
+            int succeeded = 0;
             foreach (var item in items)
             {
-                // [중요 수정] Title 대신 Folder(UUID) 전달
-                await ProcessDownloadBook(item.Folder, item.Title);
+                if (!await ProcessDownloadBook(item)) continue;
+                succeeded++;
+                RequestLibraryImport?.Invoke(item);
             }
-            _dialogService.ShowMessage("다운로드가 완료되었습니다.");
+            _dialogService.ShowMessage($"{succeeded}/{items.Count}개 도서를 다운로드했습니다.");
         }
 
-        private async Task ProcessDownloadBook(string bookFolder, string displayTitle)
+        private async Task<bool> ProcessDownloadBook(ServerBookItem item)
         {
-            // [중요] 파일명도 이제 UUID 기반입니다. (예: test_pdf_81c13072_full.json)
-            string jsonName = $"{bookFolder}_full.json";
-            string serverJsonUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookFolder}/{jsonName}";
+            if (string.IsNullOrWhiteSpace(item.TextFile) || string.IsNullOrWhiteSpace(item.CoverFile))
+            {
+                _dialogService.ShowMessage($"'{item.Title}'의 분석 결과가 아직 준비되지 않았습니다.");
+                return false;
+            }
 
-            // 로컬에 저장할 때도 UUID 폴더 안에 UUID 파일명으로 저장
-            string localJsonPath = FileHelper.GetLocalFilePath(Username, bookFolder, "", jsonName);
+            string serverJsonUrl = FileUrl(Username, item.Folder, item.TextFile);
+            string localJsonPath = FileHelper.GetLocalFilePath(Username, item.Folder, "", item.TextFile);
+            ApiResult jsonResult = await _authService.DownloadFileAsync(serverJsonUrl, localJsonPath);
+            if (!jsonResult.Success)
+            {
+                _dialogService.ShowMessage($"'{item.Title}' 본문 다운로드 실패: {jsonResult.Error?.UserMessage}");
+                return false;
+            }
 
-            bool jsonOk = await _authService.DownloadFileAsync(serverJsonUrl, localJsonPath);
-            if (!jsonOk) return;
-
-            // 커버 이미지 다운로드 (파일명 = UUID.png)
-            string coverName = $"{bookFolder}.png";
-            string localCoverPath = FileHelper.GetLocalFilePath(Username, bookFolder, "", coverName);
-            string serverCoverUrl = $"{ApiConfig.BaseUrl}/files/{Username}/{bookFolder}/{coverName}";
-            await _authService.DownloadFileAsync(serverCoverUrl, localCoverPath);
-
-            await DownloadMusicFromList(Username, bookFolder);
+            string localCoverPath = FileHelper.GetLocalFilePath(Username, item.Folder, "", item.CoverFile);
+            string serverCoverUrl = FileUrl(Username, item.Folder, item.CoverFile);
+            ApiResult coverResult = await _authService.DownloadFileAsync(serverCoverUrl, localCoverPath);
+            if (!coverResult.Success)
+            {
+                _dialogService.ShowMessage($"'{item.Title}' 표지 다운로드 실패: {coverResult.Error?.UserMessage}");
+                return false;
+            }
+            return await DownloadMusicFromList(Username, item.Folder);
+        }
+        private static string FileUrl(string username, string bookFolder, params string[] segments)
+        {
+            var encoded = new[] { username, bookFolder }.Concat(segments)
+                .Select(Uri.EscapeDataString);
+            return $"{ApiConfig.BaseUrl}/files/{string.Join("/", encoded)}";
         }
 
-        private async Task DownloadMusicFromList(string username, string bookFolder)
+        private async Task<bool> DownloadMusicFromList(string username, string bookFolder)
         {
-            var musicFiles = await _authService.GetMusicFileListAsync(username, bookFolder);
-            if (musicFiles == null || musicFiles.Count == 0) return;
+            ApiResult<List<string>> listResult = await _authService.GetMusicFileListAsync(username, bookFolder);
+            if (!listResult.Success)
+            {
+                _dialogService.ShowMessage($"음악 목록 조회 실패: {listResult.Error?.UserMessage}");
+                return false;
+            }
+            List<string> musicFiles = listResult.Value ?? new List<string>();
+            if (musicFiles.Count == 0) return true;
 
             string tempPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", "temp.wav");
             string localMusicFolder = Path.GetDirectoryName(tempPath)!;
@@ -263,13 +376,19 @@ namespace EBookStudio.ViewModels
 
             foreach (var file in musicFiles)
             {
-                string localPath = Path.Combine(localMusicFolder, file);
+                string localPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", file);
                 if (!_fileSystem.FileExists(localPath))
                 {
-                    string serverUrl = $"{ApiConfig.BaseUrl}/files/{username}/{bookFolder}/music/{file}";
-                    await _authService.DownloadFileAsync(serverUrl, localPath);
+                    string serverUrl = FileUrl(username, bookFolder, "music", file);
+                    ApiResult downloadResult = await _authService.DownloadFileAsync(serverUrl, localPath);
+                    if (!downloadResult.Success)
+                    {
+                        _dialogService.ShowMessage($"음악 다운로드 실패: {downloadResult.Error?.UserMessage}");
+                        return false;
+                    }
                 }
             }
+            return true;
         }
     }
 }

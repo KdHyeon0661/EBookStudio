@@ -1,8 +1,7 @@
-﻿using EBookStudio.Helpers;
+using EBookStudio.Helpers;
 using EBookStudio.Models;
 using EBookStudio.ViewModels;
 using System;
-using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -24,6 +23,10 @@ namespace EBookStudio.Views
         public ReadBookView()
         {
             InitializeComponent();
+            Unloaded += (s, e) =>
+            {
+                if (DataContext is ReadBookViewModel viewModel) viewModel.OnReaderClosed();
+            };
 
             // 텍스트 변경 감지
             BookViewer.TextChanged += (s, e) => { if (!_isRendering) _isContentChanged = true; };
@@ -48,16 +51,16 @@ namespace EBookStudio.Views
             _isRendering = true;
             try
             {
-                var noteData = NoteManager.LoadNotes(vm.CurrentUser, vm.BookTitle);
-                var currentHighlights = noteData.Highlights.Where(x => x.PageNumber == vm.CurrentPageNum).ToList();
-                var currentMemos = noteData.Memos.Where(x => x.PageNumber == vm.CurrentPageNum).ToList();
+                var annotations = vm.GetCurrentPageAnnotations();
+                var currentHighlights = annotations.Highlights;
+                var currentMemos = annotations.Memos;
 
                 if (BookViewer.Document == null) return;
 
                 // 하이라이트 복구
                 foreach (var hl in currentHighlights)
                 {
-                    TextRange foundRange = FindTextRangeInDocument(BookViewer.Document, hl.Content);
+                    TextRange? foundRange = FindTextRangeInDocument(BookViewer.Document, hl.Content);
                     if (foundRange != null)
                     {
                         try
@@ -80,7 +83,7 @@ namespace EBookStudio.Views
                 {
                     if (!string.IsNullOrEmpty(memo.OriginalText))
                     {
-                        TextRange foundRange = FindTextRangeInDocument(BookViewer.Document, memo.OriginalText);
+                        TextRange? foundRange = FindTextRangeInDocument(BookViewer.Document, memo.OriginalText);
                         if (foundRange != null)
                             Dispatcher.Invoke(() => ApplyMemoLink(foundRange, memo.Content));
                     }
@@ -198,7 +201,7 @@ namespace EBookStudio.Views
             }
         }
 
-        private TextRange FindTextRangeInDocument(FlowDocument doc, string textToFind)
+        private TextRange? FindTextRangeInDocument(FlowDocument doc, string textToFind)
         {
             if (string.IsNullOrEmpty(textToFind)) return null;
             TextRange fullRange = new TextRange(doc.ContentStart, doc.ContentEnd);
@@ -206,14 +209,14 @@ namespace EBookStudio.Views
             int index = fullText.IndexOf(textToFind);
             if (index != -1)
             {
-                TextPointer start = GetTextPointerAtOffset(doc.ContentStart, index);
-                TextPointer end = GetTextPointerAtOffset(start, textToFind.Length);
+                TextPointer? start = GetTextPointerAtOffset(doc.ContentStart, index);
+                TextPointer? end = start == null ? null : GetTextPointerAtOffset(start, textToFind.Length);
                 if (start != null && end != null) return new TextRange(start, end);
             }
             return null;
         }
 
-        private TextPointer GetTextPointerAtOffset(TextPointer start, int offset)
+        private TextPointer? GetTextPointerAtOffset(TextPointer start, int offset)
         {
             if (start == null) return null;
             TextPointer current = start; int count = 0;

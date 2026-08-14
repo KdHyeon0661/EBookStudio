@@ -1,4 +1,5 @@
-﻿using EBookStudio.Helpers;
+using EBookStudio.Helpers;
+using EBookStudio.Services;
 using EBookStudio.Models;
 using System.Collections.ObjectModel;
 using System.Windows.Input;

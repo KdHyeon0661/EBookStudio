@@ -1,91 +1,72 @@
-﻿using System.IO;
+using System.IO;
 
 namespace EBookStudio.Helpers
 {
     public static class FileHelper
     {
-        private static string BasePath => Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DownloadCache");
+        private const string DataRootEnvironmentVariable = "EBOOK_LOCAL_DATA_ROOT";
+        private static readonly Lazy<string> BasePathValue = new(InitializeBasePath);
 
+        public static string BasePath => BasePathValue.Value;
         public static string MusicBasePath => Path.Combine(BasePath, "music");
-
         public static string UsersBasePath => Path.Combine(BasePath, "users");
 
         public static string GetCoverFileName(string bookFolderId) => $"{bookFolderId}.png";
 
-        public static string GetLocalFilePath(string? username, string? bookFolderId, string? category, string? fileName)
+        public static string GetUserDirectory(string? username)
+            => Path.Combine(UsersBasePath, SafeSegment(username, "Guest"));
+
+        public static string GetBookDirectory(string? username, string? bookFolderId)
         {
-            string u = username ?? "Guest";
-            string b = bookFolderId ?? "UnknownBook";
-            string f = fileName ?? "";
+            if (string.IsNullOrWhiteSpace(bookFolderId)) return string.Empty;
+            return Path.Combine(GetUserDirectory(username), SafeSegment(bookFolderId, "UnknownBook"));
+        }
 
-            string cat = (category ?? "").ToLower().Trim();
+        public static string GetLocalFilePath(string? username, string? bookFolderId,
+                                              string? category, string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(bookFolderId)) return string.Empty;
 
-            string finalFolderPath;
-
-            if (string.IsNullOrWhiteSpace(bookFolderId))
+            string normalizedCategory = (category ?? string.Empty).Trim().ToLowerInvariant();
+            string folder;
+            if (normalizedCategory == "music")
             {
-                return string.Empty;
-            }
-
-            if (cat == "music")
-            {
-                finalFolderPath = MusicBasePath;
+                folder = MusicBasePath;
             }
             else
             {
-                if (cat == "texts" || cat == "text" || cat == "cover" || cat == "covers")
-                {
-                    cat = "";
-                }
-
-                string userBookDir = Path.Combine(UsersBasePath, u, b);
-
-                finalFolderPath = string.IsNullOrEmpty(cat) ? userBookDir : Path.Combine(userBookDir, cat);
+                if (normalizedCategory is "texts" or "text" or "cover" or "covers")
+                    normalizedCategory = string.Empty;
+                string bookDirectory = GetBookDirectory(username, bookFolderId);
+                folder = string.IsNullOrEmpty(normalizedCategory)
+                    ? bookDirectory
+                    : Path.Combine(bookDirectory, SafeSegment(normalizedCategory, "files"));
             }
 
-            /*if (!Directory.Exists(finalFolderPath))
-            {
-                Directory.CreateDirectory(finalFolderPath);
-            }*/
-
-            if (string.IsNullOrEmpty(f))
-            {
-                return finalFolderPath;
-            }
-
-            return Path.Combine(finalFolderPath, f);
+            if (string.IsNullOrWhiteSpace(fileName)) return folder;
+            string normalizedFile = fileName.Replace('\\', '/');
+            string safeFileName = Path.GetFileName(normalizedFile);
+            if (string.IsNullOrWhiteSpace(safeFileName))
+                throw new ArgumentException("A valid file name is required.", nameof(fileName));
+            return Path.Combine(folder, SafeSegment(safeFileName, "file"));
         }
 
         public static string GetLocalFilePath(string? username, string? bookFolderId, string? fileName)
         {
             if (string.IsNullOrEmpty(fileName))
-                return GetLocalFilePath(username, bookFolderId, "", "");
+                return GetLocalFilePath(username, bookFolderId, string.Empty, string.Empty);
 
-            string finalName = fileName!;
-            string category = "";
-
-            string normalized = finalName.Replace("\\", "/");
-
-            if (normalized.StartsWith("music/", StringComparison.OrdinalIgnoreCase))
-            {
-                category = "music";
-                finalName = Path.GetFileName(normalized);
-            }
-            else
-            {
-                category = "";
-                finalName = Path.GetFileName(normalized);
-            }
-
-            return GetLocalFilePath(username, bookFolderId, category, finalName);
+            string normalized = fileName.Replace('\\', '/');
+            string category = normalized.StartsWith("music/", StringComparison.OrdinalIgnoreCase)
+                ? "music" : string.Empty;
+            return GetLocalFilePath(username, bookFolderId, category, Path.GetFileName(normalized));
         }
 
         public static string GetLibraryFilePath(string? username)
         {
-            string u = username ?? "Guest";
-            string dir = Path.Combine(UsersBasePath, u);
-            if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
-            return Path.Combine(dir, "library.json");
+            string directory = GetUserDirectory(username);
+            Directory.CreateDirectory(directory);
+            return Path.Combine(directory, "library.json");
         }
 
         private static string LastUserFilePath => Path.Combine(BasePath, "last_user.txt");
@@ -94,42 +75,115 @@ namespace EBookStudio.Helpers
         {
             try
             {
-                if (!Directory.Exists(BasePath)) Directory.CreateDirectory(BasePath);
-                File.WriteAllText(LastUserFilePath, username ?? "");
+                AtomicFile.WriteAllText(LastUserFilePath, username ?? string.Empty);
             }
-            catch { }
+            catch (Exception error)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Last User Save Error] {error}");
+            }
         }
 
         public static string? GetLastUser()
         {
             try
             {
-                if (File.Exists(LastUserFilePath))
-                    return File.ReadAllText(LastUserFilePath).Trim();
+                return File.Exists(LastUserFilePath)
+                    ? File.ReadAllText(LastUserFilePath).Trim()
+                    : null;
             }
-            catch { }
-            return null;
+            catch (Exception error)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Last User Load Error] {error}");
+                return null;
+            }
         }
 
         public static void ResetUserData(string username)
         {
+            if (string.IsNullOrWhiteSpace(username)) return;
+            string userFolder = GetUserDirectory(username);
             try
             {
-                if (string.IsNullOrEmpty(username)) return;
-
-                string myUserFolder = Path.Combine(UsersBasePath, username);
-
-                if (Directory.Exists(myUserFolder))
-                {
-                    Directory.Delete(myUserFolder, true);
-                }
-
-                Directory.CreateDirectory(myUserFolder);
+                if (Directory.Exists(userFolder)) Directory.Delete(userFolder, recursive: true);
+                Directory.CreateDirectory(userFolder);
             }
-            catch (Exception ex)
+            catch (Exception error)
             {
-                System.Diagnostics.Debug.WriteLine($"[Reset Error] {ex.Message}");
+                System.Diagnostics.Debug.WriteLine($"[Reset Error] {error}");
+                throw new IOException("로컬 사용자 데이터를 초기화하지 못했습니다.", error);
             }
+        }
+
+        private static string InitializeBasePath()
+        {
+            string? configured = Environment.GetEnvironmentVariable(DataRootEnvironmentVariable);
+            string basePath = string.IsNullOrWhiteSpace(configured)
+                ? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "EBookStudio", "DownloadCache")
+                : Path.GetFullPath(configured);
+
+            string legacyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "DownloadCache");
+            TryMigrateLegacyCache(legacyPath, basePath);
+            Directory.CreateDirectory(basePath);
+            return basePath;
+        }
+
+        private static void TryMigrateLegacyCache(string legacyPath, string destinationPath)
+        {
+            try
+            {
+                if (!Directory.Exists(legacyPath) || Directory.Exists(destinationPath)) return;
+                string? parent = Path.GetDirectoryName(destinationPath);
+                if (string.IsNullOrWhiteSpace(parent)) return;
+                Directory.CreateDirectory(parent);
+                string stagingPath = destinationPath + $".migration-{Guid.NewGuid():N}";
+                try
+                {
+                    CopyDirectory(legacyPath, stagingPath);
+                    Directory.Move(stagingPath, destinationPath);
+                }
+                finally
+                {
+                    if (Directory.Exists(stagingPath)) Directory.Delete(stagingPath, recursive: true);
+                }
+            }
+            catch (Exception error)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Cache Migration Error] {error}");
+            }
+        }
+
+        private static void CopyDirectory(string source, string destination)
+        {
+            Directory.CreateDirectory(destination);
+            foreach (string directory in Directory.EnumerateDirectories(source, "*", SearchOption.AllDirectories))
+            {
+                string relative = Path.GetRelativePath(source, directory);
+                Directory.CreateDirectory(Path.Combine(destination, relative));
+            }
+            foreach (string file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories))
+            {
+                string relative = Path.GetRelativePath(source, file);
+                string target = Path.Combine(destination, relative);
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                File.Copy(file, target, overwrite: false);
+            }
+        }
+
+        private static string SafeSegment(string? value, string fallback)
+        {
+            string candidate = string.IsNullOrWhiteSpace(value) ? fallback : value.Trim();
+            if (candidate is "." or "..") candidate = fallback;
+            var invalid = Path.GetInvalidFileNameChars();
+            var encoded = new System.Text.StringBuilder(candidate.Length);
+            foreach (char character in candidate)
+            {
+                if (character == '%' || character == '/' || character == '\\' || invalid.Contains(character))
+                    encoded.Append('%').Append(((int)character).ToString("X4"));
+                else
+                    encoded.Append(character);
+            }
+            return encoded.Length == 0 ? fallback : encoded.ToString();
         }
     }
 }

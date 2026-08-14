@@ -1,5 +1,7 @@
-﻿using System.Windows.Input;
+using System.Windows.Input;
 using EBookStudio.Helpers;
+using EBookStudio.Services;
+using EBookStudio.Models;
 
 namespace EBookStudio.ViewModels
 {
@@ -64,15 +66,23 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            bool success = await _accountService.SendCodeAsync(Email); // ApiService 대체
-            if (success)
+            CodeSendResult result = await _accountService.SendCodeAsync(Email);
+            if (result.Success)
             {
-                _dialogService.ShowMessage("인증번호가 발송되었습니다.");
+                if (!string.IsNullOrWhiteSpace(result.DevelopmentCode))
+                {
+                    Code = result.DevelopmentCode;
+                    _dialogService.ShowMessage($"개발 모드 인증번호: {result.DevelopmentCode}");
+                }
+                else
+                {
+                    _dialogService.ShowMessage("가입된 주소라면 인증번호가 이메일로 발송됩니다.");
+                }
                 IsCodeSent = true;
             }
             else
             {
-                _dialogService.ShowMessage("이메일 전송 실패: 서버 오류거나 가입되지 않은 이메일입니다.");
+                _dialogService.ShowMessage($"이메일 전송 실패: {result.Error?.UserMessage ?? result.Message ?? "서버 오류"}");
             }
         }
 
@@ -84,17 +94,23 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            bool success = await _accountService.VerifyCodeAsync(Email, Code);
-            if (success)
+            ApiResult result = await _accountService.VerifyCodeAsync(Email, Code);
+            if (!result.Success)
             {
-                _dialogService.ShowMessage("인증 성공!");
-                IsVerified = true;
-                FoundUsername = await _accountService.FindIdAsync(Email);
+                _dialogService.ShowMessage($"인증 실패: {result.Error?.UserMessage ?? "인증번호를 확인해주세요."}");
+                return;
             }
-            else
+
+            ApiResult<string> findResult = await _accountService.FindIdAsync(Email, Code);
+            if (!findResult.Success)
             {
-                _dialogService.ShowMessage("인증번호가 틀렸습니다.");
+                _dialogService.ShowMessage($"아이디 조회 실패: {findResult.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
+                return;
             }
+
+            _dialogService.ShowMessage("인증 성공!");
+            IsVerified = true;
+            FoundUsername = findResult.Value;
         }
 
         private async Task ExecuteResetPassword()
@@ -111,16 +127,16 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            bool success = await _accountService.ResetPasswordAsync(Email, Code, NewPassword);
+            ApiResult result = await _accountService.ResetPasswordAsync(Email, Code, NewPassword);
 
-            if (success)
+            if (result.Success)
             {
                 _dialogService.ShowMessage("비밀번호가 변경되었습니다.\n로그인 화면으로 이동합니다.");
                 _mainVM.NavigateToLogin();
             }
             else
             {
-                _dialogService.ShowMessage("변경 실패: 인증 시간이 만료되었거나 오류가 발생했습니다.");
+                _dialogService.ShowMessage($"변경 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
             }
         }
 

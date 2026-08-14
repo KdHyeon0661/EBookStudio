@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using EBookStudio.Helpers;
 
 namespace EBookStudio.Models
@@ -50,6 +50,33 @@ namespace EBookStudio.Models
             get => _fileName;
             set { _fileName = value; OnPropertyChanged(); }
         }
+
+        private string _jobId = string.Empty;
+        public string JobId
+        {
+            get => _jobId;
+            set
+            {
+                _jobId = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasPendingJob));
+            }
+        }
+
+        private string _musicJobId = string.Empty;
+        public string MusicJobId
+        {
+            get => _musicJobId;
+            set
+            {
+                _musicJobId = value;
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasPendingJob));
+            }
+        }
+
+        public bool HasPendingJob => !string.IsNullOrWhiteSpace(JobId) ||
+                                     !string.IsNullOrWhiteSpace(MusicJobId);
 
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public string CoverColor { get; set; } = "#FFFFFF";

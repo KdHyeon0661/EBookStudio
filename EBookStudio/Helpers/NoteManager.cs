@@ -1,4 +1,4 @@
-﻿using EBookStudio.Models;
+using EBookStudio.Models;
 using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
@@ -29,7 +29,7 @@ namespace EBookStudio.Helpers
 
             var options = new JsonSerializerOptions { WriteIndented = true };
             string json = JsonSerializer.Serialize(data, options);
-            File.WriteAllText(path, json);
+            AtomicFile.WriteAllText(path, json);
         }
 
         public static void AddItem(string username, string bookFolder, NoteItem item)
