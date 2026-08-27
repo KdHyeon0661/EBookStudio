@@ -62,7 +62,7 @@ namespace EBookStudio.ViewModels
             OpenBookCommand = new RelayCommand(parameter =>
             {
                 if (parameter is Book book && !book.IsAddButton && book.IsAvailable)
-                    _mainVM.NavigateToReader(book);
+                    _mainVM.NavigateToBookDetail(book);
             });
             DeleteBookCommand = new AsyncRelayCommand(async parameter =>
             {

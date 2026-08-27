@@ -304,6 +304,82 @@ namespace EBookStudio.Services
             catch (Exception error) { return ApiResult<UsageSummaryResponse>.Fail(FromException(error)); }
         }
 
+        public async Task<ApiResult<UsageBookListResponse>> GetUsageBooksAsync()
+        {
+            ApiResult access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult<UsageBookListResponse>.Fail(access.Error!);
+            try
+            {
+                using var request = AuthorizedRequest(HttpMethod.Get, "/usage/books");
+                using var response = await Client.SendAsync(request);
+                return await ReadJsonResponseAsync<UsageBookListResponse>(response);
+            }
+            catch (Exception error)
+            {
+                return ApiResult<UsageBookListResponse>.Fail(FromException(error));
+            }
+        }
+
+        public async Task<ApiResult<UsageDailySeriesResponse>> GetUsageDailyAsync(int days)
+        {
+            ApiResult access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult<UsageDailySeriesResponse>.Fail(access.Error!);
+            if (days < 1 || days > 90)
+                return ApiResult<UsageDailySeriesResponse>.Fail(
+                    new ApiError(ApiErrorKind.Validation, "Days must be between 1 and 90"));
+            try
+            {
+                using var request = AuthorizedRequest(HttpMethod.Get, $"/usage/daily?days={days}");
+                using var response = await Client.SendAsync(request);
+                return await ReadJsonResponseAsync<UsageDailySeriesResponse>(response);
+            }
+            catch (Exception error)
+            {
+                return ApiResult<UsageDailySeriesResponse>.Fail(FromException(error));
+            }
+        }
+
+        public async Task<ApiResult<BookProcessingHistoryResponse>> GetBookProcessingHistoryAsync(
+            string bookFolder)
+        {
+            ApiResult access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult<BookProcessingHistoryResponse>.Fail(access.Error!);
+            if (string.IsNullOrWhiteSpace(bookFolder))
+                return ApiResult<BookProcessingHistoryResponse>.Fail(
+                    new ApiError(ApiErrorKind.Validation, "Book folder is required"));
+            try
+            {
+                using var request = AuthorizedRequest(HttpMethod.Get,
+                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/processing-history");
+                using var response = await Client.SendAsync(request);
+                return await ReadJsonResponseAsync<BookProcessingHistoryResponse>(response);
+            }
+            catch (Exception error)
+            {
+                return ApiResult<BookProcessingHistoryResponse>.Fail(FromException(error));
+            }
+        }
+
+        public async Task<ApiResult<BookMusicTracksResponse>> GetBookMusicTracksAsync(string bookFolder)
+        {
+            ApiResult access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult<BookMusicTracksResponse>.Fail(access.Error!);
+            if (string.IsNullOrWhiteSpace(bookFolder))
+                return ApiResult<BookMusicTracksResponse>.Fail(
+                    new ApiError(ApiErrorKind.Validation, "Book folder is required"));
+            try
+            {
+                using var request = AuthorizedRequest(HttpMethod.Get,
+                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/music-tracks");
+                using var response = await Client.SendAsync(request);
+                return await ReadJsonResponseAsync<BookMusicTracksResponse>(response);
+            }
+            catch (Exception error)
+            {
+                return ApiResult<BookMusicTracksResponse>.Fail(FromException(error));
+            }
+        }
+
         public async Task<ApiResult<List<ServerBook>>> GetMyServerBooksAsync(string username)
         {
             ApiResult access = await EnsureAccessTokenAsync();

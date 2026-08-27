@@ -222,6 +222,13 @@ namespace EBookStudio.ViewModels
             IsAuthView = true;
         }
 
+        public void NavigateToBookDetail(Book book)
+        {
+            IsTopBarVisible = true;
+            CurrentView = new BookDetailViewModel(this, book);
+            IsAuthView = false;
+        }
+
         public void NavigateToReader(Book book)
         {
             IsTopBarVisible = false;

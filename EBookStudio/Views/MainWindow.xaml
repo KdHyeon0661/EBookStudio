@@ -102,6 +102,9 @@
                 <DataTemplate DataType="{x:Type vm:LibraryViewModel}">
                     <v:LibraryView />
                 </DataTemplate>
+                <DataTemplate DataType="{x:Type vm:BookDetailViewModel}">
+                    <v:BookDetailView />
+                </DataTemplate>
                 <DataTemplate DataType="{x:Type vm:LoginViewModel}">
                     <v:LoginView />
                 </DataTemplate>

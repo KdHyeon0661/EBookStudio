@@ -59,35 +59,101 @@ namespace EBookStudio.Services
                 ?? new ApiError(ApiErrorKind.Network, "Usage summary is unavailable"));
         }
 
+        public async Task<ApiResult<UsageDashboard>> GetDashboardAsync(string username, int days = 7)
+        {
+            if (string.IsNullOrWhiteSpace(username))
+                return ApiResult<UsageDashboard>.Fail(
+                    new ApiError(ApiErrorKind.Authentication, "Username is required"));
+            ApiResult sync = await SyncAsync(username);
+            ApiError? remoteError = sync.Error;
+            if (sync.Success)
+            {
+                Task<ApiResult<UsageSummaryResponse>> summaryTask = _api.GetUsageSummaryAsync();
+                Task<ApiResult<UsageBookListResponse>> booksTask = _api.GetUsageBooksAsync();
+                Task<ApiResult<UsageDailySeriesResponse>> dailyTask = _api.GetUsageDailyAsync(days);
+                await Task.WhenAll(summaryTask, booksTask, dailyTask);
+
+                ApiResult<UsageSummaryResponse> summary = await summaryTask;
+                ApiResult<UsageBookListResponse> books = await booksTask;
+                ApiResult<UsageDailySeriesResponse> daily = await dailyTask;
+                if (summary.Success && summary.Value != null &&
+                    books.Success && books.Value != null &&
+                    daily.Success && daily.Value != null)
+                {
+                    var dashboard = new UsageDashboard
+                    {
+                        Summary = summary.Value,
+                        Books = books.Value.Books,
+                        Daily = daily.Value
+                    };
+                    SaveCachedSummary(username, dashboard.Summary);
+                    SaveCachedDashboard(username, dashboard);
+                    return ApiResult<UsageDashboard>.Ok(dashboard);
+                }
+                remoteError = summary.Error ?? books.Error ?? daily.Error;
+            }
+
+            UsageDashboard? cached = LoadCachedDashboard(username);
+            if (cached != null)
+            {
+                cached.IsCached = true;
+                cached.Summary.IsCached = true;
+                return ApiResult<UsageDashboard>.Ok(cached);
+            }
+            UsageSummaryResponse? cachedSummary = LoadCachedSummary(username);
+            if (cachedSummary != null)
+            {
+                cachedSummary.IsCached = true;
+                return ApiResult<UsageDashboard>.Ok(new UsageDashboard
+                {
+                    Summary = cachedSummary,
+                    IsCached = true
+                });
+            }
+            return ApiResult<UsageDashboard>.Fail(remoteError
+                ?? new ApiError(ApiErrorKind.Network, "Usage dashboard is unavailable"));
+        }
+
         private static string CachedSummaryPath(string username)
             => Path.Combine(FileHelper.GetUserDirectory(username), "usage_summary.json");
 
+        private static string CachedDashboardPath(string username)
+            => Path.Combine(FileHelper.GetUserDirectory(username), "usage_dashboard.json");
+
         private static void SaveCachedSummary(string username, UsageSummaryResponse summary)
+            => SaveCache(CachedSummaryPath(username), summary, "Usage Summary");
+
+        private static void SaveCachedDashboard(string username, UsageDashboard dashboard)
+            => SaveCache(CachedDashboardPath(username), dashboard, "Usage Dashboard");
+
+        private static void SaveCache<T>(string path, T value, string label)
         {
             try
             {
-                string path = CachedSummaryPath(username);
                 Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(summary));
+                AtomicFile.WriteAllText(path, JsonSerializer.Serialize(value));
             }
             catch (Exception error)
             {
-                System.Diagnostics.Debug.WriteLine($"[Usage Summary Save Error] {error.Message}");
+                System.Diagnostics.Debug.WriteLine($"[{label} Save Error] {error.Message}");
             }
         }
 
         private static UsageSummaryResponse? LoadCachedSummary(string username)
+            => LoadCache<UsageSummaryResponse>(CachedSummaryPath(username), "Usage Summary");
+
+        private static UsageDashboard? LoadCachedDashboard(string username)
+            => LoadCache<UsageDashboard>(CachedDashboardPath(username), "Usage Dashboard");
+
+        private static T? LoadCache<T>(string path, string label) where T : class
         {
             try
             {
-                string path = CachedSummaryPath(username);
-                return File.Exists(path)
-                    ? JsonSerializer.Deserialize<UsageSummaryResponse>(File.ReadAllText(path))
-                    : null;
+                return File.Exists(path) ? JsonSerializer.Deserialize<T>(File.ReadAllText(path)) : null;
             }
             catch (Exception error)
             {
-                System.Diagnostics.Debug.WriteLine($"[Usage Summary Load Error] {error.Message}");
+                System.Diagnostics.Debug.WriteLine($"[{label} Load Error] {error.Message}");
                 return null;
             }
         }

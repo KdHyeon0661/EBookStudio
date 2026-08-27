@@ -81,6 +81,7 @@ namespace EBookStudio.Services
     {
         Task<ApiResult> SyncAsync(string username);
         Task<ApiResult<UsageSummaryResponse>> GetSummaryAsync(string username);
+        Task<ApiResult<UsageDashboard>> GetDashboardAsync(string username, int days = 7);
     }
 
     public interface INetworkService
@@ -110,5 +111,9 @@ namespace EBookStudio.Services
         Task<ApiResult> DeleteServerBookAsync(string bookFolder);
         Task<ApiResult<UsageBatchResponse>> SubmitUsageEventsAsync(List<UsageEvent> events);
         Task<ApiResult<UsageSummaryResponse>> GetUsageSummaryAsync();
+        Task<ApiResult<UsageBookListResponse>> GetUsageBooksAsync();
+        Task<ApiResult<UsageDailySeriesResponse>> GetUsageDailyAsync(int days);
+        Task<ApiResult<BookProcessingHistoryResponse>> GetBookProcessingHistoryAsync(string bookFolder);
+        Task<ApiResult<BookMusicTracksResponse>> GetBookMusicTracksAsync(string bookFolder);
     }
 }

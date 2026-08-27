@@ -8,6 +8,8 @@
              d:DesignHeight="1200" d:DesignWidth="1200">
 
     <UserControl.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+        <helpers:InverseBoolToVisibilityConverter x:Key="InverseBoolToVis"/>
         <helpers:BoolToColorConverter x:Key="BoolToColorConverter"/>
         <helpers:BoolToOffsetConverter x:Key="BoolToOffsetConverter"/>
         <helpers:PasswordMultiConverter x:Key="PasswordMultiConverter"/>
@@ -104,6 +106,8 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="*"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel Grid.Column="0">
                                 <TextBlock Text="전체 앱 사용" Style="{StaticResource DescTextStyle}"/>
@@ -121,6 +125,14 @@
                                 <TextBlock Text="읽은 책" Style="{StaticResource DescTextStyle}"/>
                                 <TextBlock Text="{Binding BooksRead}" FontSize="20" FontWeight="Bold" Style="{StaticResource NormalTextStyle}"/>
                             </StackPanel>
+                            <StackPanel Grid.Column="4">
+                                <TextBlock Text="페이지 이동" Style="{StaticResource DescTextStyle}"/>
+                                <TextBlock Text="{Binding PageTurns}" FontSize="20" FontWeight="Bold" Style="{StaticResource NormalTextStyle}"/>
+                            </StackPanel>
+                            <StackPanel Grid.Column="5">
+                                <TextBlock Text="활동 일수" Style="{StaticResource DescTextStyle}"/>
+                                <TextBlock Text="{Binding ActiveDays}" FontSize="20" FontWeight="Bold" Style="{StaticResource NormalTextStyle}"/>
+                            </StackPanel>
                         </Grid>
                         <Separator Background="#EEE" Margin="0,20,0,15" Opacity="0.4"/>
                         <Grid>
@@ -129,8 +141,97 @@
                                     Padding="15,7" Background="White" BorderBrush="#AAA" BorderThickness="1"
                                     Foreground="#555" Cursor="Hand"/>
                         </Grid>
-                        <TextBlock Text="책 내용, 메모, 페이지별 행동은 서버에 전송하지 않습니다. 오프라인 기록은 다음 로그인 시 동기화됩니다."
+                        <TextBlock Text="책 본문과 메모는 서버에 전송하지 않습니다. 독서 시간, 페이지 이동 횟수와 진도율만 오프라인 큐에 저장한 뒤 동기화합니다."
                                    Style="{StaticResource DescTextStyle}" Margin="0,12,0,0" TextWrapping="Wrap"/>
+
+                        <Separator Background="#EEE" Margin="0,22,0,18" Opacity="0.4"/>
+                        <Grid>
+                            <TextBlock Text="최근 7일 활동" FontWeight="SemiBold" FontSize="15"
+                                       Style="{StaticResource NormalTextStyle}"/>
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                <Rectangle Width="10" Height="10" Fill="#8EC5FF" Margin="0,0,5,0"/>
+                                <TextBlock Text="앱" Style="{StaticResource DescTextStyle}" Margin="0,-3,14,0"/>
+                                <Rectangle Width="10" Height="10" Fill="#007AFF" Margin="0,0,5,0"/>
+                                <TextBlock Text="독서" Style="{StaticResource DescTextStyle}" Margin="0,-3,0,0"/>
+                            </StackPanel>
+                        </Grid>
+                        <TextBlock Text="동기화된 일별 통계가 없습니다." Style="{StaticResource DescTextStyle}"
+                                   Margin="0,18,0,4" HorizontalAlignment="Center"
+                                   Visibility="{Binding HasDailyUsage, Converter={StaticResource InverseBoolToVis}}"/>
+                        <ItemsControl ItemsSource="{Binding DailyUsageItems}" Margin="0,14,0,0">
+                            <ItemsControl.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <UniformGrid Rows="1"/>
+                                </ItemsPanelTemplate>
+                            </ItemsControl.ItemsPanel>
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="132" Margin="5,0">
+                                        <Grid.RowDefinitions>
+                                            <RowDefinition Height="88"/>
+                                            <RowDefinition Height="Auto"/>
+                                            <RowDefinition Height="Auto"/>
+                                        </Grid.RowDefinitions>
+                                        <Grid VerticalAlignment="Bottom" HorizontalAlignment="Center">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="14"/>
+                                                <ColumnDefinition Width="4"/>
+                                                <ColumnDefinition Width="14"/>
+                                            </Grid.ColumnDefinitions>
+                                            <Border Grid.Column="0" Height="{Binding AppBarHeight}" Background="#8EC5FF"
+                                                    VerticalAlignment="Bottom" CornerRadius="3,3,0,0"
+                                                    ToolTip="{Binding AppDuration}"/>
+                                            <Border Grid.Column="2" Height="{Binding ReadingBarHeight}" Background="#007AFF"
+                                                    VerticalAlignment="Bottom" CornerRadius="3,3,0,0"
+                                                    ToolTip="{Binding ReadingDuration}"/>
+                                        </Grid>
+                                        <TextBlock Grid.Row="1" Text="{Binding DateLabel}" HorizontalAlignment="Center"
+                                                   Style="{StaticResource DescTextStyle}" Margin="0,3,0,0"/>
+                                        <TextBlock Grid.Row="2" Text="{Binding TotalDuration}" HorizontalAlignment="Center"
+                                                   Foreground="#999" FontSize="10" Margin="0,2,0,0"/>
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <Separator Background="#EEE" Margin="0,20,0,18" Opacity="0.4"/>
+                        <TextBlock Text="책별 독서 기록" FontWeight="SemiBold" FontSize="15"
+                                   Style="{StaticResource NormalTextStyle}"/>
+                        <TextBlock Text="동기화된 책별 독서 기록이 없습니다." Style="{StaticResource DescTextStyle}"
+                                   Margin="0,14,0,0" HorizontalAlignment="Center"
+                                   Visibility="{Binding HasBookUsage, Converter={StaticResource InverseBoolToVis}}"/>
+                        <ItemsControl ItemsSource="{Binding BookUsageItems}" Margin="0,9,0,0">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border BorderBrush="#E8EAED" BorderThickness="0,1,0,0" Padding="0,13">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="170"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                           Style="{StaticResource NormalTextStyle}"/>
+                                                <TextBlock Text="{Binding LastReadText}" Style="{StaticResource DescTextStyle}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1">
+                                                <TextBlock Text="{Binding ReadingDuration}" FontWeight="Bold"
+                                                           Foreground="#007AFF"/>
+                                                <TextBlock Text="{Binding ActivitySummary}" Style="{StaticResource DescTextStyle}"/>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="2">
+                                                <TextBlock Text="{Binding ProgressText}" HorizontalAlignment="Right"
+                                                           Style="{StaticResource DescTextStyle}"/>
+                                                <ProgressBar Value="{Binding ProgressValue}" Maximum="100" Height="7"
+                                                             Margin="0,7,0,0" Foreground="#007AFF"
+                                                             Background="#E9ECEF" BorderThickness="0"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                     </StackPanel>
                 </Border>
 

@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -34,6 +35,11 @@ namespace EBookStudio.ViewModels
                 TotalReadingUsage = "0분";
                 ReadingSessions = "0회";
                 BooksRead = "0권";
+                PageTurns = "0회";
+                ActiveDays = "0일";
+                BookUsageItems.Clear();
+                DailyUsageItems.Clear();
+                NotifyUsageCollections();
                 UsageStatus = string.IsNullOrWhiteSpace(value) ? "로그인 후 확인할 수 있습니다." : "동기화 대기 중";
             }
         }
@@ -49,6 +55,12 @@ namespace EBookStudio.ViewModels
 
         private string _booksRead = "0권";
         public string BooksRead { get => _booksRead; private set { _booksRead = value; OnPropertyChanged(); } }
+
+        private string _pageTurns = "0회";
+        public string PageTurns { get => _pageTurns; private set { _pageTurns = value; OnPropertyChanged(); } }
+
+        private string _activeDays = "0일";
+        public string ActiveDays { get => _activeDays; private set { _activeDays = value; OnPropertyChanged(); } }
 
         private string _usageStatus = "동기화 대기 중";
         public string UsageStatus { get => _usageStatus; private set { _usageStatus = value; OnPropertyChanged(); } }
@@ -75,6 +87,10 @@ namespace EBookStudio.ViewModels
 
         public ObservableCollection<ServerBookItem> ServerDeleteList { get; } = new ObservableCollection<ServerBookItem>();
         public ObservableCollection<ServerBookItem> ServerDownloadList { get; } = new ObservableCollection<ServerBookItem>();
+        public ObservableCollection<BookUsageDisplayItem> BookUsageItems { get; } = new();
+        public ObservableCollection<DailyUsageDisplayItem> DailyUsageItems { get; } = new();
+        public bool HasBookUsage => BookUsageItems.Count > 0;
+        public bool HasDailyUsage => DailyUsageItems.Count > 0;
 
         public ICommand ChangePasswordCommand { get; }
         public ICommand ResetHistoryCommand { get; }
@@ -132,23 +148,89 @@ namespace EBookStudio.ViewModels
 
         public async Task RefreshUsageAsync()
         {
-            if (string.IsNullOrWhiteSpace(Username)) return;
+            string requestedUsername = Username;
+            if (string.IsNullOrWhiteSpace(requestedUsername)) return;
             UsageStatus = "동기화 중...";
-            ApiResult<UsageSummaryResponse> result = await _usageService.GetSummaryAsync(Username);
+            ApiResult<UsageDashboard> result = await _usageService.GetDashboardAsync(requestedUsername, 7);
+            if (!string.Equals(Username, requestedUsername, StringComparison.Ordinal)) return;
             if (!result.Success || result.Value == null)
             {
                 UsageStatus = "오프라인 · 기록은 기기에 안전하게 대기 중";
                 return;
             }
-            TotalAppUsage = FormatDuration(result.Value.TotalAppSeconds);
-            TotalReadingUsage = FormatDuration(result.Value.TotalReadingSeconds);
-            ReadingSessions = $"{result.Value.ReadingSessionCount:N0}회";
-            BooksRead = $"{result.Value.BooksReadCount:N0}권";
-            UsageStatus = result.Value.IsCached
+
+            UsageDashboard dashboard = result.Value;
+            UsageSummaryResponse summary = dashboard.Summary;
+            TotalAppUsage = FormatDuration(summary.TotalAppSeconds);
+            TotalReadingUsage = FormatDuration(summary.TotalReadingSeconds);
+            ReadingSessions = $"{summary.ReadingSessionCount:N0}회";
+            BooksRead = $"{summary.BooksReadCount:N0}권";
+            PageTurns = $"{summary.PageTurnCount:N0}회";
+            ActiveDays = $"{summary.ActiveDayCount:N0}일";
+
+            Dictionary<string, string> titles = LoadBookTitles(requestedUsername);
+            BookUsageItems.Clear();
+            foreach (BookUsageSummaryResponse book in dashboard.Books)
+            {
+                string title = titles.GetValueOrDefault(book.BookId, book.BookId);
+                BookUsageItems.Add(new BookUsageDisplayItem(
+                    title, book.BookId, FormatDuration(book.TotalReadingSeconds),
+                    $"세션 {book.ReadingSessionCount:N0}회 · 페이지 이동 {book.PageTurnCount:N0}회",
+                    book.HighestProgressPercent, $"최고 진도 {book.HighestProgressPercent}%",
+                    $"최근 독서 {FormatTimestamp(book.LastReadAt)}"));
+            }
+
+            DailyUsageItems.Clear();
+            long maxDailySeconds = Math.Max(1, dashboard.Daily.Daily
+                .Select(day => day.AppSeconds + day.ReadingSeconds).DefaultIfEmpty(0).Max());
+            foreach (DailyUsageResponse day in dashboard.Daily.Daily)
+            {
+                DailyUsageItems.Add(new DailyUsageDisplayItem(
+                    FormatDate(day.Date), ScaleBar(day.AppSeconds, maxDailySeconds),
+                    ScaleBar(day.ReadingSeconds, maxDailySeconds), FormatDuration(day.AppSeconds),
+                    FormatDuration(day.ReadingSeconds),
+                    FormatDuration(day.AppSeconds + day.ReadingSeconds)));
+            }
+            NotifyUsageCollections();
+            UsageStatus = dashboard.IsCached
                 ? "오프라인 · 마지막으로 동기화된 통계"
-                : $"최근 7일 {FormatDuration(result.Value.Last7DaysAppSeconds)} · "
-                    + $"활동 {result.Value.ActiveDayCount:N0}일";
+                : $"최근 7일 {FormatDuration(summary.Last7DaysAppSeconds)} · "
+                    + $"활동 {summary.ActiveDayCount:N0}일";
         }
+
+        private void NotifyUsageCollections()
+        {
+            OnPropertyChanged(nameof(HasBookUsage));
+            OnPropertyChanged(nameof(HasDailyUsage));
+        }
+
+        private static Dictionary<string, string> LoadBookTitles(string username)
+        {
+            try
+            {
+                string path = FileHelper.GetLibraryFilePath(username);
+                if (!File.Exists(path)) return new(StringComparer.Ordinal);
+                List<Book>? books = JsonSerializer.Deserialize<List<Book>>(File.ReadAllText(path));
+                return books?.Where(book => !string.IsNullOrWhiteSpace(book.FolderId))
+                    .GroupBy(book => book.FolderId, StringComparer.Ordinal)
+                    .ToDictionary(group => group.Key, group => group.First().Title, StringComparer.Ordinal)
+                    ?? new(StringComparer.Ordinal);
+            }
+            catch (Exception error)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Usage Book Title Error] {error.Message}");
+                return new(StringComparer.Ordinal);
+            }
+        }
+
+        private static double ScaleBar(long seconds, long maximum)
+            => seconds <= 0 ? 2 : Math.Max(6, seconds * 74d / maximum);
+
+        private static string FormatDate(string value)
+            => DateOnly.TryParse(value, out DateOnly date) ? date.ToString("MM.dd") : value;
+
+        private static string FormatTimestamp(long epochSeconds)
+            => DateTimeOffset.FromUnixTimeSeconds(epochSeconds).ToLocalTime().ToString("yyyy.MM.dd HH:mm");
 
         private static string FormatDuration(long seconds)
         {

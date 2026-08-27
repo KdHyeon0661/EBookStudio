@@ -42,8 +42,10 @@ PDF를 업로드하면 **서버가 책을 분석(표지 PNG + 본문 JSON)** 하
 - 서버에 저장된 내 책 목록 조회(`/my_books`)
 - 서버 책 삭제(전체/단건) 및 로컬 다운로드(전체/단건)
 - 다운로드 완료 즉시 제목·저자·표지 정보를 로컬 보관함에 병합
-- 전체 앱 활성 시간, 실제 독서 시간, 세션 수와 읽은 책 수 표시
-- 오프라인 활동은 로컬 큐에 저장하고 로그인·온라인 복구 시 멱등 동기화
+- 전체 앱 활성 시간, 실제 독서 시간, 세션 수, 읽은 책 수와 최근 7일 추이 표시
+- 책별 독서 시간·세션·페이지 이동·최고 진도·마지막 독서 시각 표시
+- 책 상세에서 분석/음악 생성 이력, 산출물, 모델 버전과 공용 음악 재사용 횟수 조회
+- 오프라인 활동은 로컬 큐에 저장하고 로그인·온라인 복구 시 이벤트 UUID로 멱등 동기화
 
 ---
 
@@ -64,18 +66,16 @@ PDF를 업로드하면 **서버가 책을 분석(표지 PNG + 본문 JSON)** 하
 `http://127.0.0.1:5000`입니다.
 
 ```powershell
-cd EBookStudioServer-master\spring-server
-.\mvnw.cmd spring-boot:run
-
-# 별도 터미널
 cd EBookStudioServer-master
-python spring_worker.py --role analyze
+.\scripts\docker-up.ps1
+
+# CPU MusicGen까지 기능 확인할 때만 사용
+.\scripts\docker-up.ps1 -MusicProfile cpu-music
 ```
 
-음악 생성까지 실행하려면 전체 워커 의존성을 설치한 뒤 별도 터미널에서
-`python spring_worker.py --role music_generation`을 실행합니다. `/health`가
-`{"status":"ok"}`를 반환하면 API가 준비된 상태입니다. 전체 구조는 서버 저장소의
-`ARCHITECTURE.md`를 참고하십시오.
+스크립트가 PostgreSQL·Spring API·Python 분석 Worker를 빌드하고 healthcheck 완료까지
+기다립니다. 음악 생성은 CPU 또는 NVIDIA GPU 프로필 중 하나만 선택합니다. Spring과
+Worker를 IDE에서 직접 실행하려면 서버 저장소의 `README.md`를 참고하십시오.
 
 ### 2) 클라이언트 실행
 #### Visual Studio
@@ -122,7 +122,8 @@ $env:EBOOK_LOCAL_DATA_ROOT='D:\\EBookStudioData'
    └─ <username>/
       ├─ library.json           # 서재 목록
       ├─ usage_activity.json    # 진행 중/전송 대기 사용량 세션
-      ├─ usage_summary.json     # 마지막 서버 집계(오프라인 표시용)
+      ├─ usage_summary.json     # 마지막 전체 서버 집계(오프라인 표시용)
+      ├─ usage_dashboard.json   # 책별·일별 서버 집계 캐시
       └─ <bookFolderId>/
          ├─ <BookTitle>.png     # 표지
          ├─ <BookTitle>_full.json
@@ -175,6 +176,15 @@ $env:EBOOK_LOCAL_DATA_ROOT='D:\\EBookStudioData'
 ```
 
 ---
+
+## 빌드 검증
+
+```powershell
+cd EBookStudio-master\EBookStudio
+dotnet build -c Release
+```
+
+Release 빌드는 네트워크가 끊긴 상태에서도 이미 내려받은 책을 열 수 있는지와 별개입니다. 로그인·업로드·서버 통계는 온라인이어야 하며, 실패한 사용량 전송은 다음 로그인 때 다시 시도됩니다.
 
 ## 트러블슈팅
 

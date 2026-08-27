@@ -223,7 +223,7 @@ namespace EBookStudio.ViewModels
             _usageTimer.Interval = TimeSpan.FromSeconds(15);
             _usageTimer.Tick += (s, e) =>
             {
-                if (Application.Current.MainWindow?.IsActive == true)
+                if (_activityReady && Application.Current.MainWindow?.IsActive == true)
                     _readingUsageSession?.AddActiveSeconds(15, CurrentPageNum, TotalPages);
             };
             _usageTimer.Start();
