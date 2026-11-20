@@ -87,6 +87,8 @@
                 </Button>
                 <TextBlock Text="독서 노트" FontSize="18" FontWeight="Bold" Foreground="#333"
                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding Status}" Foreground="#B91C1C"
+                           HorizontalAlignment="Right" VerticalAlignment="Center"/>
             </Grid>
         </Border>
 

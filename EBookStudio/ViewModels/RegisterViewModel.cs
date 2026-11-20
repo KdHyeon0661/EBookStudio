@@ -19,6 +19,9 @@ namespace EBookStudio.ViewModels
         private string _username = string.Empty;
         private string _email = string.Empty;
         private string _verificationCode = string.Empty;
+        private long _emailVersion;
+        private long _verificationVersion;
+        private bool _sendingCode;
 
         private bool _isEmailSent = false;
         private bool _isVerified = false;
@@ -32,25 +35,44 @@ namespace EBookStudio.ViewModels
         public string Email
         {
             get => _email;
-            set { _email = value; OnPropertyChanged(); }
+            set
+            {
+                if (_email == value) return;
+                _email = value;
+                _emailVersion++;
+                _verificationVersion++;
+                IsEmailSent = false;
+                IsVerified = false;
+                VerificationCode = string.Empty;
+                OnPropertyChanged();
+            }
         }
 
         public string VerificationCode
         {
             get => _verificationCode;
-            set { _verificationCode = value; OnPropertyChanged(); }
+            set
+            {
+                if (_verificationCode == value) return;
+                _verificationCode = value;
+                _verificationVersion++;
+                IsVerified = false;
+                OnPropertyChanged();
+            }
         }
 
         public bool IsEmailSent
         {
             get => _isEmailSent;
-            set { _isEmailSent = value; OnPropertyChanged(); }
+            private set { _isEmailSent = value; OnPropertyChanged(); OnPropertyChanged(nameof(SendCodeLabel)); }
         }
+
+        public string SendCodeLabel => IsEmailSent ? "인증번호 재발송" : "인증 요청";
 
         public bool IsVerified
         {
             get => _isVerified;
-            set { _isVerified = value; OnPropertyChanged(); }
+            private set { _isVerified = value; OnPropertyChanged(); }
         }
 
         // [수정] XAML 바인딩 이름과 일치시킴 (ExecuteRegisterCommand -> RegisterCommand)
@@ -75,25 +97,38 @@ namespace EBookStudio.ViewModels
 
         private async Task ExecuteSendCode()
         {
-            if (string.IsNullOrWhiteSpace(Email) || !Email.Contains("@"))
+            string email = Email.Trim();
+            if (string.IsNullOrWhiteSpace(email) || !email.Contains('@'))
             {
                 _dialogService.ShowMessage("유효한 이메일을 입력해주세요.");
                 return;
             }
 
-            CodeSendResult result = await _authService.SendVerificationCodeAsync(Email);
+            long emailVersion = _emailVersion;
+            _verificationVersion++;
+            _sendingCode = true;
+            CodeSendResult result;
+            try { result = await _authService.SendVerificationCodeAsync(email); }
+            finally { _sendingCode = false; }
+            if (emailVersion != _emailVersion) return;
             if (result.Success)
             {
+                if (!result.Delivered && string.IsNullOrWhiteSpace(result.DevelopmentCode))
+                {
+                    _dialogService.ShowMessage("서버에서 인증 메일 발송을 확인하지 못했습니다.");
+                    return;
+                }
+                IsEmailSent = true;
+                IsVerified = false;
+                VerificationCode = string.Empty;
                 if (!string.IsNullOrWhiteSpace(result.DevelopmentCode))
                 {
-                    VerificationCode = result.DevelopmentCode;
-                    _dialogService.ShowMessage($"개발 모드 인증번호: {result.DevelopmentCode}");
+                    _dialogService.ShowMessage($"개발 모드 인증번호를 직접 입력해주세요.\n{result.DevelopmentCode}");
                 }
                 else
                 {
                     _dialogService.ShowMessage("인증번호가 이메일로 발송되었습니다.");
                 }
-                IsEmailSent = true;
             }
             else
             {
@@ -103,13 +138,17 @@ namespace EBookStudio.ViewModels
 
         private async Task ExecuteVerifyCode()
         {
-            if (string.IsNullOrWhiteSpace(VerificationCode))
+            if (_sendingCode || !IsEmailSent) return;
+            string code = VerificationCode.Trim();
+            if (string.IsNullOrWhiteSpace(code))
             {
                 _dialogService.ShowMessage("인증번호를 입력해주세요.");
                 return;
             }
 
-            ApiResult result = await _authService.VerifyCodeAsync(Email, VerificationCode);
+            long version = _verificationVersion;
+            ApiResult result = await _authService.VerifyCodeAsync(Email.Trim(), code);
+            if (version != _verificationVersion || _sendingCode) return;
             if (result.Success)
             {
                 _dialogService.ShowMessage("인증되었습니다.");
@@ -156,13 +195,15 @@ namespace EBookStudio.ViewModels
                 return;
             }
 
-            if (!IsVerified)
+            if (!IsVerified || _sendingCode)
             {
                 _dialogService.ShowMessage("이메일 인증을 완료해주세요.");
                 return;
             }
 
-            ApiResult result = await _authService.RegisterAsync(Username, password, Email, VerificationCode);
+            long version = _verificationVersion;
+            ApiResult result = await _authService.RegisterAsync(Username.Trim(), password, Email.Trim(), VerificationCode.Trim());
+            if (version != _verificationVersion) return;
 
             if (result.Success)
             {
@@ -177,6 +218,8 @@ namespace EBookStudio.ViewModels
 
         public void Clear()
         {
+            _emailVersion++;
+            _verificationVersion++;
             Username = string.Empty;
             Email = string.Empty;
             VerificationCode = string.Empty;

@@ -13,14 +13,14 @@ namespace EBookStudio.Helpers
         public static void RecoverInterruptedSessions(string username)
         {
             if (string.IsNullOrWhiteSpace(username)) return;
-            lock (Gate)
+            TryEdit(username, state =>
             {
-                UsageState state = Load(username);
                 foreach (UsageEvent pending in state.Pending.Where(x => x.DurationSeconds > 0))
                     AddToOutbox(state, pending);
+                bool changed = state.Pending.Count > 0;
                 state.Pending.Clear();
-                Save(username, state);
-            }
+                return changed;
+            });
         }
 
         public static UsageSession? StartSession(string username, string eventType, string? bookId = null)
@@ -37,13 +37,12 @@ namespace EBookStudio.Helpers
                 BookId = eventType == "reading_session" ? bookId : null,
                 OccurredAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
             };
-            lock (Gate)
+            bool saved = TryEdit(username, state =>
             {
-                UsageState state = Load(username);
                 state.Pending.Add(usageEvent);
-                Save(username, state);
-            }
-            return new UsageSession(username, usageEvent.EventId);
+                return true;
+            });
+            return saved ? new UsageSession(username, usageEvent.EventId) : null;
         }
 
         public static List<UsageEvent> GetOutboxBatch(string username, int maximum = 100)
@@ -91,27 +90,43 @@ namespace EBookStudio.Helpers
 
         internal static void Complete(string username, string eventId, int currentPage, int totalPages)
         {
-            lock (Gate)
+            TryEdit(username, state =>
             {
-                UsageState state = Load(username);
                 UsageEvent? usageEvent = state.Pending.FirstOrDefault(x => x.EventId == eventId);
-                if (usageEvent == null) return;
+                if (usageEvent == null) return false;
                 state.Pending.Remove(usageEvent);
                 UpdateProgress(usageEvent, currentPage, totalPages);
                 if (usageEvent.DurationSeconds > 0) AddToOutbox(state, usageEvent);
-                Save(username, state);
-            }
+                return true;
+            });
         }
 
         private static void UpdatePending(string username, string eventId, Action<UsageEvent> update)
         {
-            lock (Gate)
+            TryEdit(username, state =>
             {
-                UsageState state = Load(username);
                 UsageEvent? usageEvent = state.Pending.FirstOrDefault(x => x.EventId == eventId);
-                if (usageEvent == null) return;
+                if (usageEvent == null) return false;
                 update(usageEvent);
-                Save(username, state);
+                return true;
+            });
+        }
+
+        private static bool TryEdit(string username, Func<UsageState, bool> update)
+        {
+            try
+            {
+                lock (Gate)
+                {
+                    UsageState state = Load(username);
+                    if (update(state)) Save(username, state);
+                }
+                return true;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Usage storage] {error}");
+                return false;
             }
         }
 
@@ -147,16 +162,15 @@ namespace EBookStudio.Helpers
         private static UsageState Load(string username)
         {
             string path = StatePath(username);
-            if (!File.Exists(path)) return new();
             try
             {
-                return JsonSerializer.Deserialize<UsageState>(File.ReadAllText(path)) ?? new();
+                var state = JsonSerializer.Deserialize<UsageState>(File.ReadAllText(path));
+                if (state == null || state.Pending == null || state.Outbox == null ||
+                    state.Pending.Any(item => item == null) || state.Outbox.Any(item => item == null))
+                    throw new JsonException("사용량 기록 형식이 올바르지 않습니다.");
+                return state;
             }
-            catch (Exception error)
-            {
-                System.Diagnostics.Debug.WriteLine($"[Usage Load Error] {error.Message}");
-                return new();
-            }
+            catch (Exception error) when (error is FileNotFoundException or DirectoryNotFoundException) { return new(); }
         }
 
         private static void Save(string username, UsageState state)

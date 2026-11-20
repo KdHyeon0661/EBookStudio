@@ -11,69 +11,109 @@ namespace EBookStudio.Services
 {
     public class ApiService : IApiService
     {
-        private static readonly HttpClient Client = new() { Timeout = TimeSpan.FromMinutes(3) };
-        private static readonly SemaphoreSlim RefreshLock = new(1, 1);
-        public static string? CurrentToken { get; private set; }
-        public static string? CurrentRefreshToken { get; private set; }
+        private static readonly TimeSpan TransferTimeout = TimeSpan.FromMinutes(3);
+        private static readonly HttpClient SharedClient = new() { Timeout = TransferTimeout };
+        private static Session? _currentSession;
+        internal static event Action<LocalAccount>? SessionExpired;
+        private readonly HttpClient _client;
+        private readonly Session? _boundSession;
+
+        private sealed record Credentials(string AccessToken, string RefreshToken);
+
+        private sealed class Session(LocalAccount account, Credentials credentials)
+        {
+            internal LocalAccount Account { get; } = account;
+            internal volatile Credentials Tokens = credentials;
+            internal SemaphoreSlim RefreshLock { get; } = new(1, 1);
+        }
+
+        public ApiService() : this(SharedClient) { }
+        internal ApiService(HttpClient client) : this(client, null) { }
+
+        private ApiService(HttpClient client, Session? boundSession)
+        {
+            _client = client;
+            _boundSession = boundSession;
+        }
+
+        public IApiService? ForAccount(string cacheKey)
+        {
+            Session? session = _boundSession ?? Volatile.Read(ref _currentSession);
+            return session != null && IsCurrent(session) &&
+                   string.Equals(session.Account.CacheKey, cacheKey, StringComparison.Ordinal)
+                ? new ApiService(_client, session) : null;
+        }
+
+        public bool IsSessionCurrent => _boundSession != null && IsCurrent(_boundSession);
+
+        private static bool IsCurrent(Session session)
+            => ReferenceEquals(Volatile.Read(ref _currentSession), session);
+
+        private static ApiError SessionChanged()
+            => new(ApiErrorKind.Authentication, "The account session has changed");
 
         public async Task<ApiResult> RegisterAsync(string username, string password, string email, string code)
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/register",
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/register",
                     new { username, password, email, code });
                 return await ReadActionResponseAsync(response);
             }
             catch (Exception error) { return ApiResult.Fail(FromException(error)); }
         }
 
-        public async Task<ApiResult> LoginAsync(string username, string password)
+        public async Task<ApiResult<LocalAccount>> LoginAsync(string username, string password,
+                                                              CancellationToken cancellationToken = default)
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/login",
-                    new { username, password });
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/login",
+                    new { username, password }, cancellationToken);
                 var parsed = await ReadJsonResponseAsync<LoginResponse>(response);
-                if (!parsed.Success) return ApiResult.Fail(parsed.Error!);
-                if (string.IsNullOrWhiteSpace(parsed.Value?.token) ||
-                    string.IsNullOrWhiteSpace(parsed.Value.refresh_token))
-                    return ApiResult.Fail(InvalidResponse("Login tokens are missing"));
-                SetTokens(parsed.Value.token, parsed.Value.refresh_token);
-                return ApiResult.Ok();
+                if (!parsed.Success) return ApiResult<LocalAccount>.Fail(parsed.Error!);
+                if (!TryReadSession(parsed.Value, out LocalAccount? account, out Credentials? tokens))
+                    return ApiResult<LocalAccount>.Fail(InvalidResponse("Login identity or tokens are missing"));
+
+                cancellationToken.ThrowIfCancellationRequested();
+                Interlocked.Exchange(ref _currentSession, new Session(account!, tokens!));
+                return ApiResult<LocalAccount>.Ok(account!);
             }
-            catch (Exception error) { return ApiResult.Fail(FromException(error)); }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception error) { return ApiResult<LocalAccount>.Fail(FromException(error)); }
         }
 
         public async Task LogoutAsync()
         {
+            Session? session = Interlocked.Exchange(ref _currentSession, null);
+            if (session == null) return;
+
+            await session.RefreshLock.WaitAsync();
             try
             {
-                ApiResult access = await EnsureAccessTokenAsync();
-                if (access.Success)
+                Credentials tokens = session.Tokens;
+                if (!TokenValidFor(tokens.AccessToken, TimeSpan.Zero))
                 {
-                    using var request = AuthorizedRequest(HttpMethod.Post, "/logout");
-                    request.Content = JsonContent.Create(new { refresh_token = CurrentRefreshToken });
-                    using var response = await Client.SendAsync(request);
+                    var refreshed = await RefreshCredentialsAsync(session.Account, tokens.RefreshToken);
+                    if (!refreshed.Success) return;
+                    tokens = refreshed.Value!;
                 }
+                using var request = AuthorizedRequest(HttpMethod.Post, "/logout", tokens);
+                request.Content = JsonContent.Create(new { refresh_token = tokens.RefreshToken });
+                using var response = await _client.SendAsync(request);
             }
             catch (Exception error)
             {
                 System.Diagnostics.Debug.WriteLine($"[Logout Error] {error}");
             }
-            finally { Logout(); }
-        }
-
-        public void Logout()
-        {
-            CurrentToken = null;
-            CurrentRefreshToken = null;
+            finally { session.RefreshLock.Release(); }
         }
 
         public async Task<CodeSendResult> SendCodeAsync(string email, string purpose)
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/send_code",
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/send_code",
                     new { email, purpose });
                 var parsed = await ReadJsonResponseAsync<CodeSendResponse>(response);
                 if (!parsed.Success)
@@ -102,7 +142,7 @@ namespace EBookStudio.Services
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/verify_code",
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/verify_code",
                     new { email, code, purpose });
                 return await ReadActionResponseAsync(response);
             }
@@ -113,7 +153,7 @@ namespace EBookStudio.Services
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/find_id",
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/find_id",
                     new { email, code });
                 var parsed = await ReadJsonResponseAsync<Dictionary<string, string>>(response);
                 if (!parsed.Success) return ApiResult<string>.Fail(parsed.Error!);
@@ -129,7 +169,7 @@ namespace EBookStudio.Services
         {
             try
             {
-                using var response = await Client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/reset_password",
+                using var response = await _client.PostAsJsonAsync($"{ApiConfig.BaseUrl}/reset_password",
                     new { email, code, new_password = newPassword });
                 return await ReadActionResponseAsync(response);
             }
@@ -138,14 +178,14 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult> ChangePasswordAsync(string currentPassword, string newPassword)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
-            if (!access.Success) return access;
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Post, "/change_password");
+                using var request = AuthorizedRequest(HttpMethod.Post, "/change_password", access.Value!.Tokens);
                 request.Content = JsonContent.Create(new
                     { current_password = currentPassword, new_password = newPassword });
-                using var response = await Client.SendAsync(request);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadActionResponseAsync(response);
             }
             catch (Exception error) { return ApiResult.Fail(FromException(error)); }
@@ -153,14 +193,14 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult> DeleteAccountAsync()
         {
-            ApiResult access = await EnsureAccessTokenAsync();
-            if (!access.Success) return access;
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Delete, "/account");
-                using var response = await Client.SendAsync(request);
+                using var request = AuthorizedRequest(HttpMethod.Delete, "/account", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 ApiResult result = await ReadActionResponseAsync(response);
-                if (result.Success) Logout();
+                if (result.Success) Interlocked.CompareExchange(ref _currentSession, null, access.Value);
                 return result;
             }
             catch (Exception error) { return ApiResult.Fail(FromException(error)); }
@@ -170,7 +210,7 @@ namespace EBookStudio.Services
         {
             try
             {
-                ApiResult access = await EnsureAccessTokenAsync();
+                ApiResult<Session> access = await EnsureAccessTokenAsync();
                 if (!access.Success) return UploadFailure(access.Error!);
 
                 using var content = new MultipartFormDataContent();
@@ -179,9 +219,9 @@ namespace EBookStudio.Services
                 fileContent.Headers.ContentType = new MediaTypeHeaderValue("application/pdf");
                 content.Add(fileContent, "file", Path.GetFileName(filePath));
                 content.Add(new StringContent(requestId), "request_id");
-                using var request = AuthorizedRequest(HttpMethod.Post, "/upload_book");
+                using var request = AuthorizedRequest(HttpMethod.Post, "/upload_book", access.Value!.Tokens);
                 request.Content = content;
-                using var response = await Client.SendAsync(request);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 var acceptedResult = await ReadJsonResponseAsync<UploadResponse>(response);
                 if (!acceptedResult.Success) return UploadFailure(acceptedResult.Error!);
                 UploadResponse? accepted = acceptedResult.Value;
@@ -201,13 +241,13 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<JobStatusResponse>> GetJobStatusAsync(string jobId)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<JobStatusResponse>.Fail(access.Error!);
             try
             {
                 using var request = AuthorizedRequest(HttpMethod.Get,
-                    $"/check_status/{Uri.EscapeDataString(jobId)}");
-                using var response = await Client.SendAsync(request);
+                    $"/check_status/{Uri.EscapeDataString(jobId)}", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<JobStatusResponse>(response);
             }
             catch (Exception error) { return ApiResult<JobStatusResponse>.Fail(FromException(error)); }
@@ -215,45 +255,52 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<JobStatusResponse>> CancelJobAsync(string jobId)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<JobStatusResponse>.Fail(access.Error!);
             try
             {
                 using var request = AuthorizedRequest(HttpMethod.Delete,
-                    $"/jobs/{Uri.EscapeDataString(jobId)}");
-                using var response = await Client.SendAsync(request);
+                    $"/jobs/{Uri.EscapeDataString(jobId)}", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<JobStatusResponse>(response);
             }
             catch (Exception error) { return ApiResult<JobStatusResponse>.Fail(FromException(error)); }
         }
 
-        public async Task<ApiResult> DownloadFileAsync(string url, string localPath)
+        public async Task<ApiResult> DownloadFileAsync(string url, string localPath,
+                                                       CancellationToken cancellationToken = default)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
-            if (!access.Success) return access;
+            cancellationToken.ThrowIfCancellationRequested();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult.Fail(access.Error!);
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            deadline.CancelAfter(TransferTimeout);
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CurrentToken);
-                using var response = await Client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access.Value!.Tokens.AccessToken);
+                using var response = await SendAuthorizedAsync(request, access.Value!, HttpCompletionOption.ResponseHeadersRead,
+                    deadline.Token);
                 if (!response.IsSuccessStatusCode)
-                    return ApiResult.Fail(await CreateErrorAsync(response));
-                await using Stream source = await response.Content.ReadAsStreamAsync();
-                await AtomicFile.WriteStreamAsync(localPath, source);
+                    return ApiResult.Fail(await CreateErrorAsync(response, deadline.Token));
+                await using Stream source = await response.Content.ReadAsStreamAsync(deadline.Token);
+                await AtomicFile.WriteStreamAsync(localPath, source, deadline.Token);
                 return ApiResult.Ok();
             }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException error) { return ApiResult.Fail(new ApiError(ApiErrorKind.Timeout, error.Message)); }
             catch (Exception error) { return ApiResult.Fail(FromException(error)); }
         }
 
         public async Task<ApiResult<byte[]>> DownloadBytesAsync(string url)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<byte[]>.Fail(access.Error!);
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Get, url);
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CurrentToken);
-                using var response = await Client.SendAsync(request);
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access.Value!.Tokens.AccessToken);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 if (!response.IsSuccessStatusCode)
                     return ApiResult<byte[]>.Fail(await CreateErrorAsync(response));
                 return ApiResult<byte[]>.Ok(await response.Content.ReadAsByteArrayAsync());
@@ -263,13 +310,13 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<List<string>>> GetMusicFileListAsync(string username, string bookFolder)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<List<string>>.Fail(access.Error!);
             try
             {
                 using var request = AuthorizedRequest(HttpMethod.Get,
-                    $"/list_music_files/{Uri.EscapeDataString(username)}/{Uri.EscapeDataString(bookFolder)}");
-                using var response = await Client.SendAsync(request);
+                    $"/list_music_files/{Uri.EscapeDataString(username)}/{Uri.EscapeDataString(bookFolder)}", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 var parsed = await ReadJsonResponseAsync<Dictionary<string, List<string>>>(response);
                 if (!parsed.Success) return ApiResult<List<string>>.Fail(parsed.Error!);
                 return ApiResult<List<string>>.Ok(parsed.Value?.GetValueOrDefault("files") ?? new());
@@ -279,13 +326,13 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<UsageBatchResponse>> SubmitUsageEventsAsync(List<UsageEvent> events)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<UsageBatchResponse>.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Post, "/usage/events");
+                using var request = AuthorizedRequest(HttpMethod.Post, "/usage/events", access.Value!.Tokens);
                 request.Content = JsonContent.Create(new { events });
-                using var response = await Client.SendAsync(request);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<UsageBatchResponse>(response);
             }
             catch (Exception error) { return ApiResult<UsageBatchResponse>.Fail(FromException(error)); }
@@ -293,12 +340,12 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<UsageSummaryResponse>> GetUsageSummaryAsync()
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<UsageSummaryResponse>.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Get, "/usage/summary");
-                using var response = await Client.SendAsync(request);
+                using var request = AuthorizedRequest(HttpMethod.Get, "/usage/summary", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<UsageSummaryResponse>(response);
             }
             catch (Exception error) { return ApiResult<UsageSummaryResponse>.Fail(FromException(error)); }
@@ -306,12 +353,12 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<UsageBookListResponse>> GetUsageBooksAsync()
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<UsageBookListResponse>.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Get, "/usage/books");
-                using var response = await Client.SendAsync(request);
+                using var request = AuthorizedRequest(HttpMethod.Get, "/usage/books", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<UsageBookListResponse>(response);
             }
             catch (Exception error)
@@ -322,15 +369,15 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<UsageDailySeriesResponse>> GetUsageDailyAsync(int days)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<UsageDailySeriesResponse>.Fail(access.Error!);
             if (days < 1 || days > 90)
                 return ApiResult<UsageDailySeriesResponse>.Fail(
                     new ApiError(ApiErrorKind.Validation, "Days must be between 1 and 90"));
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Get, $"/usage/daily?days={days}");
-                using var response = await Client.SendAsync(request);
+                using var request = AuthorizedRequest(HttpMethod.Get, $"/usage/daily?days={days}", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<UsageDailySeriesResponse>(response);
             }
             catch (Exception error)
@@ -342,7 +389,7 @@ namespace EBookStudio.Services
         public async Task<ApiResult<BookProcessingHistoryResponse>> GetBookProcessingHistoryAsync(
             string bookFolder)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<BookProcessingHistoryResponse>.Fail(access.Error!);
             if (string.IsNullOrWhiteSpace(bookFolder))
                 return ApiResult<BookProcessingHistoryResponse>.Fail(
@@ -350,8 +397,8 @@ namespace EBookStudio.Services
             try
             {
                 using var request = AuthorizedRequest(HttpMethod.Get,
-                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/processing-history");
-                using var response = await Client.SendAsync(request);
+                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/processing-history", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<BookProcessingHistoryResponse>(response);
             }
             catch (Exception error)
@@ -362,7 +409,7 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<BookMusicTracksResponse>> GetBookMusicTracksAsync(string bookFolder)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<BookMusicTracksResponse>.Fail(access.Error!);
             if (string.IsNullOrWhiteSpace(bookFolder))
                 return ApiResult<BookMusicTracksResponse>.Fail(
@@ -370,8 +417,8 @@ namespace EBookStudio.Services
             try
             {
                 using var request = AuthorizedRequest(HttpMethod.Get,
-                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/music-tracks");
-                using var response = await Client.SendAsync(request);
+                    $"/api/books/{Uri.EscapeDataString(bookFolder)}/music-tracks", access.Value!.Tokens);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadJsonResponseAsync<BookMusicTracksResponse>(response);
             }
             catch (Exception error)
@@ -382,13 +429,13 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult<List<ServerBook>>> GetMyServerBooksAsync(string username)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
             if (!access.Success) return ApiResult<List<ServerBook>>.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Post, "/my_books");
+                using var request = AuthorizedRequest(HttpMethod.Post, "/my_books", access.Value!.Tokens);
                 request.Content = JsonContent.Create(new { });
-                using var response = await Client.SendAsync(request);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 var parsed = await ReadJsonResponseAsync<Dictionary<string, List<ServerBook>>>(response);
                 if (!parsed.Success) return ApiResult<List<ServerBook>>.Fail(parsed.Error!);
                 return ApiResult<List<ServerBook>>.Ok(parsed.Value?.GetValueOrDefault("books") ?? new());
@@ -398,64 +445,100 @@ namespace EBookStudio.Services
 
         public async Task<ApiResult> DeleteServerBookAsync(string bookFolder)
         {
-            ApiResult access = await EnsureAccessTokenAsync();
-            if (!access.Success) return access;
+            ApiResult<Session> access = await EnsureAccessTokenAsync();
+            if (!access.Success) return ApiResult.Fail(access.Error!);
             try
             {
-                using var request = AuthorizedRequest(HttpMethod.Post, "/delete_server_book");
+                using var request = AuthorizedRequest(HttpMethod.Post, "/delete_server_book", access.Value!.Tokens);
                 request.Content = JsonContent.Create(new { book_folder = bookFolder });
-                using var response = await Client.SendAsync(request);
+                using var response = await SendAuthorizedAsync(request, access.Value!);
                 return await ReadActionResponseAsync(response);
             }
             catch (Exception error) { return ApiResult.Fail(FromException(error)); }
         }
 
-        private static HttpRequestMessage AuthorizedRequest(HttpMethod method, string path)
+        private static HttpRequestMessage AuthorizedRequest(HttpMethod method, string path, Credentials tokens)
         {
             var request = new HttpRequestMessage(method, $"{ApiConfig.BaseUrl}{path}");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CurrentToken);
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", tokens.AccessToken);
             return request;
         }
 
-        private static void SetTokens(string accessToken, string refreshToken)
+        private static bool TryReadSession(LoginResponse? response, out LocalAccount? account,
+                                           out Credentials? tokens)
         {
-            CurrentToken = accessToken;
-            CurrentRefreshToken = refreshToken;
+            account = null;
+            tokens = null;
+            if (response == null || string.IsNullOrWhiteSpace(response.username) ||
+                !Guid.TryParse(response.public_id, out Guid id) || id == Guid.Empty ||
+                string.IsNullOrWhiteSpace(response.token) || string.IsNullOrWhiteSpace(response.refresh_token))
+                return false;
+            account = new LocalAccount(response.username, id);
+            tokens = new Credentials(response.token, response.refresh_token);
+            return true;
         }
 
-        private static async Task<ApiResult> EnsureAccessTokenAsync()
+        private async Task<ApiResult<Credentials>> RefreshCredentialsAsync(
+            LocalAccount account, string refreshToken)
         {
-            if (string.IsNullOrWhiteSpace(CurrentToken))
-                return ApiResult.Fail(new ApiError(ApiErrorKind.Authentication, "Access token is missing"));
-            if (TokenValidFor(CurrentToken, TimeSpan.FromMinutes(1))) return ApiResult.Ok();
-            if (string.IsNullOrWhiteSpace(CurrentRefreshToken))
-                return ApiResult.Fail(new ApiError(ApiErrorKind.Authentication, "Refresh token is missing"));
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiConfig.BaseUrl}/refresh");
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", refreshToken);
+            using var response = await _client.SendAsync(request);
+            var parsed = await ReadJsonResponseAsync<LoginResponse>(response);
+            if (!parsed.Success) return ApiResult<Credentials>.Fail(parsed.Error!);
+            if (!TryReadSession(parsed.Value, out LocalAccount? refreshedAccount, out Credentials? tokens) ||
+                refreshedAccount!.PublicId != account.PublicId)
+                return ApiResult<Credentials>.Fail(InvalidResponse("Refresh identity or tokens are invalid"));
+            return ApiResult<Credentials>.Ok(tokens!);
+        }
 
-            await RefreshLock.WaitAsync();
+        private async Task<ApiResult<Session>> EnsureAccessTokenAsync()
+        {
+            Session? session = _boundSession ?? Volatile.Read(ref _currentSession);
+            if (session == null || !IsCurrent(session))
+                return ApiResult<Session>.Fail(SessionChanged());
+            if (TokenValidFor(session.Tokens.AccessToken, TimeSpan.FromMinutes(1)))
+                return ApiResult<Session>.Ok(session);
+
+            await session.RefreshLock.WaitAsync();
             try
             {
-                if (TokenValidFor(CurrentToken, TimeSpan.FromMinutes(1))) return ApiResult.Ok();
-                using var request = new HttpRequestMessage(HttpMethod.Post, $"{ApiConfig.BaseUrl}/refresh");
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", CurrentRefreshToken);
-                using var response = await Client.SendAsync(request);
-                var parsed = await ReadJsonResponseAsync<LoginResponse>(response);
-                if (!parsed.Success)
+                if (!IsCurrent(session)) return ApiResult<Session>.Fail(SessionChanged());
+                if (TokenValidFor(session.Tokens.AccessToken, TimeSpan.FromMinutes(1)))
+                    return ApiResult<Session>.Ok(session);
+
+                var refreshed = await RefreshCredentialsAsync(session.Account, session.Tokens.RefreshToken);
+                if (!refreshed.Success)
                 {
-                    if (parsed.Error?.Kind is ApiErrorKind.Authentication or ApiErrorKind.Validation)
-                        LogoutStatic();
-                    return ApiResult.Fail(parsed.Error!);
+                    if (refreshed.Error?.Kind is ApiErrorKind.Authentication or ApiErrorKind.Validation
+                        or ApiErrorKind.InvalidResponse)
+                        InvalidateSession(session);
+                    return ApiResult<Session>.Fail(refreshed.Error!);
                 }
-                if (string.IsNullOrWhiteSpace(parsed.Value?.token) ||
-                    string.IsNullOrWhiteSpace(parsed.Value.refresh_token))
-                {
-                    LogoutStatic();
-                    return ApiResult.Fail(InvalidResponse("Refresh tokens are missing"));
-                }
-                SetTokens(parsed.Value.token, parsed.Value.refresh_token);
-                return ApiResult.Ok();
+                // Logout may be waiting to revoke the rotated credentials of this same session.
+                session.Tokens = refreshed.Value!;
+                return IsCurrent(session)
+                    ? ApiResult<Session>.Ok(session) : ApiResult<Session>.Fail(SessionChanged());
             }
-            catch (Exception error) { return ApiResult.Fail(FromException(error)); }
-            finally { RefreshLock.Release(); }
+            catch (Exception error) { return ApiResult<Session>.Fail(FromException(error)); }
+            finally { session.RefreshLock.Release(); }
+        }
+
+        private async Task<HttpResponseMessage> SendAuthorizedAsync(HttpRequestMessage request, Session session,
+            HttpCompletionOption option = HttpCompletionOption.ResponseContentRead,
+            CancellationToken cancellationToken = default)
+        {
+            HttpResponseMessage response = await _client.SendAsync(request, option, cancellationToken);
+            if (response.StatusCode == HttpStatusCode.Unauthorized &&
+                request.Headers.Authorization?.Parameter == session.Tokens.AccessToken)
+                InvalidateSession(session);
+            return response;
+        }
+
+        private static void InvalidateSession(Session session)
+        {
+            if (ReferenceEquals(Interlocked.CompareExchange(ref _currentSession, null, session), session))
+                SessionExpired?.Invoke(session.Account);
         }
 
         private static async Task<ApiResult> ReadActionResponseAsync(HttpResponseMessage response)
@@ -487,12 +570,13 @@ namespace EBookStudio.Services
             }
         }
 
-        private static async Task<ApiError> CreateErrorAsync(HttpResponseMessage response)
+        private static async Task<ApiError> CreateErrorAsync(HttpResponseMessage response,
+                                                             CancellationToken cancellationToken = default)
         {
             string message = response.ReasonPhrase ?? "Request failed";
             try
             {
-                string body = await response.Content.ReadAsStringAsync();
+                string body = await response.Content.ReadAsStringAsync(cancellationToken);
                 if (!string.IsNullOrWhiteSpace(body))
                 {
                     using JsonDocument document = JsonDocument.Parse(body);
@@ -546,12 +630,6 @@ namespace EBookStudio.Services
 
         private static UploadResult UploadFailure(ApiError error, string? jobId = null, string? message = null)
             => new() { Success = false, JobId = jobId, Error = error, Message = message ?? error.UserMessage };
-
-        private static void LogoutStatic()
-        {
-            CurrentToken = null;
-            CurrentRefreshToken = null;
-        }
 
         private static bool TokenValidFor(string? token, TimeSpan minimumRemaining)
         {

@@ -17,6 +17,7 @@
         public string Content { get; set; } = string.Empty; // 내용 (하이라이트된 텍스트 or 메모)
         public string OriginalText { get; set; } = string.Empty; // (메모용) 원문
         public string Color { get; set; } = string.Empty;   // (하이라이트용) 색상
+        public int TextOffset { get; set; } = -1; // 페이지 본문 내 시작 위치(-1은 기존 데이터)
         public DateTime CreatedAt { get; set; } = DateTime.Now;
 
         public string DateString => CreatedAt.ToString("yyyy.MM.dd HH:mm");

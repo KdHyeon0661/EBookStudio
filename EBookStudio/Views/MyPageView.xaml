@@ -223,7 +223,7 @@
                                             <StackPanel Grid.Column="2">
                                                 <TextBlock Text="{Binding ProgressText}" HorizontalAlignment="Right"
                                                            Style="{StaticResource DescTextStyle}"/>
-                                                <ProgressBar Value="{Binding ProgressValue}" Maximum="100" Height="7"
+                                                <ProgressBar Value="{Binding ProgressValue, Mode=OneWay}" Maximum="100" Height="7"
                                                              Margin="0,7,0,0" Foreground="#007AFF"
                                                              Background="#E9ECEF" BorderThickness="0"/>
                                             </StackPanel>
@@ -419,7 +419,7 @@
                                                                     </CheckBox.LayoutTransform>
                                                                 </CheckBox>
 
-                                                                <Image Grid.Column="1" Source="{Binding DisplayCoverUrl}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
+                                                                <Image Grid.Column="1" Source="{Binding CoverImage}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
                                                                 <TextBlock Grid.Column="2" Text="{Binding Title}" VerticalAlignment="Center" FontWeight="SemiBold"/>
 
                                                                 <Button Grid.Column="3" Content="✕"
@@ -507,7 +507,7 @@
                                                                     </CheckBox.LayoutTransform>
                                                                 </CheckBox>
 
-                                                                <Image Grid.Column="1" Source="{Binding DisplayCoverUrl}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
+                                                                <Image Grid.Column="1" Source="{Binding CoverImage}" Height="40" Stretch="UniformToFill" Margin="0,0,10,0"/>
                                                                 <TextBlock Grid.Column="2" Text="{Binding Title}" VerticalAlignment="Center" FontWeight="SemiBold"/>
 
                                                                 <Button Grid.Column="3" Content="↓"

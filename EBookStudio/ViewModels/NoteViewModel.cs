@@ -2,6 +2,7 @@ using EBookStudio.Helpers;
 using EBookStudio.Services;
 using EBookStudio.Models;
 using System.Collections.ObjectModel;
+using System.IO;
 using System.Windows.Input;
 
 namespace EBookStudio.ViewModels
@@ -37,6 +38,9 @@ namespace EBookStudio.ViewModels
         public string HighlightCount => $"총 {Highlights.Count}개";
         public string MemoCount => $"총 {Memos.Count}개";
 
+        private string _status = string.Empty;
+        public string Status { get => _status; private set { _status = value; OnPropertyChanged(); } }
+
         public ICommand GoBackCommand { get; }
         public ICommand SwitchTabCommand { get; }
         public ICommand DeleteItemCommand { get; }
@@ -46,7 +50,7 @@ namespace EBookStudio.ViewModels
         {
             _mainVM = mainVM;
             _currentBook = book;
-            _username = mainVM.LoggedInUser;
+            _username = mainVM.LocalCacheKey;
             _lastPageNum = lastPageNum;
 
             if (string.IsNullOrEmpty(_currentBook.FolderId)) _currentBook.FolderId = _currentBook.Title;
@@ -55,8 +59,8 @@ namespace EBookStudio.ViewModels
 
             GoBackCommand = new RelayCommand(o =>
             {
-                var readerVM = new ReadBookViewModel(_mainVM, _currentBook);
-                readerVM.TargetPage = _lastPageNum;
+                var readerVM = new ReadBookViewModel(_mainVM, _currentBook,
+                    noteService: _noteService, targetPage: _lastPageNum);
                 _mainVM.CurrentView = readerVM;
                 _mainVM.IsAuthView = true;
             });
@@ -74,8 +78,13 @@ namespace EBookStudio.ViewModels
                 if (o is NoteItem item)
                 {
                     // [수정] FolderId 사용
-                    _noteService.RemoveItem(_username, _currentBook.FolderId, item);
-                    LoadData();
+                    try
+                    {
+                        _noteService.RemoveItem(_username, _currentBook.FolderId, item);
+                        LoadData();
+                    }
+                    catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+                    { Status = "노트를 삭제하지 못했습니다."; }
                 }
             });
 
@@ -83,8 +92,8 @@ namespace EBookStudio.ViewModels
             {
                 if (o is NoteItem item)
                 {
-                    var readerVM = new ReadBookViewModel(_mainVM, _currentBook);
-                    readerVM.TargetPage = item.PageNumber;
+                    var readerVM = new ReadBookViewModel(_mainVM, _currentBook,
+                        noteService: _noteService, targetPage: item.PageNumber);
                     _mainVM.CurrentView = readerVM;
                     _mainVM.IsAuthView = true;
                 }
@@ -96,7 +105,14 @@ namespace EBookStudio.ViewModels
         private void LoadData()
         {
             // [수정] FolderId 사용
-            var data = _noteService.LoadNotes(_username, _currentBook.FolderId);
+            (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) data;
+            try { data = _noteService.LoadNotes(_username, _currentBook.FolderId); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                Status = "노트 파일을 읽지 못했습니다.";
+                return;
+            }
+            Status = string.Empty;
 
             Bookmarks.Clear();
             if (data.Bookmarks != null)

@@ -42,6 +42,9 @@ namespace EBookStudio.Models
             ApiErrorKind.Server => "서버에서 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
             ApiErrorKind.InvalidResponse => "서버 응답 형식이 올바르지 않습니다.",
             ApiErrorKind.LocalStorage => "파일을 안전하게 저장하지 못했습니다. 저장 공간과 권한을 확인해주세요.",
+            _ when Message.Contains("Email delivery is not configured", StringComparison.OrdinalIgnoreCase)
+                || Message.Contains("인증 메일 서비스가 설정되지 않았습니다", StringComparison.Ordinal)
+                => "인증 메일 서비스가 설정되지 않았습니다. 서버의 SMTP 설정을 확인해주세요.",
             _ => string.IsNullOrWhiteSpace(Message) ? "요청을 처리하지 못했습니다." : Message
         };
     }
@@ -57,21 +60,6 @@ namespace EBookStudio.Models
     {
         public static ApiResult<T> Ok(T value) => new(true, value);
         public static ApiResult<T> Fail(ApiError error) => new(false, null, error);
-    }
-
-    public class Segment
-    {
-        public int segment_index { get; set; }
-        public string emotion { get; set; } = string.Empty;
-        public string music_filename { get; set; } = string.Empty;
-        public List<BookPage>? pages { get; set; }
-    }
-
-    public class BookPage
-    {
-        public int page_index { get; set; }
-        public string text { get; set; } = string.Empty;
-        public bool is_new_segment { get; set; }
     }
 
     public class UploadResponse
@@ -116,6 +104,14 @@ namespace EBookStudio.Models
         public string? refresh_token { get; set; }
         public string? username { get; set; }
         public string? public_id { get; set; }
+    }
+
+    public sealed record LocalAccount(string Username, Guid? PublicId)
+    {
+        internal const string LegacyPrefix = "legacy:";
+
+        [JsonIgnore]
+        public string CacheKey => PublicId?.ToString("D") ?? LegacyPrefix + Username;
     }
 
     public class CodeSendResponse

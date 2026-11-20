@@ -1,4 +1,6 @@
+using EBookStudio.Models;
 using System.IO;
+using System.Text.Json;
 
 namespace EBookStudio.Helpers
 {
@@ -9,12 +11,15 @@ namespace EBookStudio.Helpers
 
         public static string BasePath => BasePathValue.Value;
         public static string MusicBasePath => Path.Combine(BasePath, "music");
-        public static string UsersBasePath => Path.Combine(BasePath, "users");
+        public static string UsersBasePath => Path.Combine(BasePath, "accounts");
+        private static string LegacyUsersBasePath => Path.Combine(BasePath, "users");
 
         public static string GetCoverFileName(string bookFolderId) => $"{bookFolderId}.png";
 
-        public static string GetUserDirectory(string? username)
-            => Path.Combine(UsersBasePath, SafeSegment(username, "Guest"));
+        public static string GetUserDirectory(string? cacheKey)
+            => cacheKey?.StartsWith(LocalAccount.LegacyPrefix, StringComparison.Ordinal) == true
+                ? Path.Combine(LegacyUsersBasePath, SafeSegment(cacheKey[LocalAccount.LegacyPrefix.Length..], "Guest"))
+                : Path.Combine(UsersBasePath, SafeSegment(cacheKey, "Guest"));
 
         public static string GetBookDirectory(string? username, string? bookFolderId)
         {
@@ -69,13 +74,14 @@ namespace EBookStudio.Helpers
             return Path.Combine(directory, "library.json");
         }
 
-        private static string LastUserFilePath => Path.Combine(BasePath, "last_user.txt");
+        private static string LastAccountFilePath => Path.Combine(BasePath, "last_account.json");
+        private static string LegacyLastUserFilePath => Path.Combine(BasePath, "last_user.txt");
 
-        public static void SaveLastUser(string username)
+        public static void SaveLastAccount(LocalAccount? account)
         {
             try
             {
-                AtomicFile.WriteAllText(LastUserFilePath, username ?? string.Empty);
+                AtomicFile.WriteAllText(LastAccountFilePath, JsonSerializer.Serialize(account));
             }
             catch (Exception error)
             {
@@ -83,19 +89,49 @@ namespace EBookStudio.Helpers
             }
         }
 
-        public static string? GetLastUser()
+        public static LocalAccount? GetLastAccount()
         {
             try
             {
-                return File.Exists(LastUserFilePath)
-                    ? File.ReadAllText(LastUserFilePath).Trim()
-                    : null;
+                if (File.Exists(LastAccountFilePath))
+                {
+                    var account = JsonSerializer.Deserialize<LocalAccount>(File.ReadAllText(LastAccountFilePath));
+                    return account?.PublicId is Guid id && id != Guid.Empty &&
+                           !string.IsNullOrWhiteSpace(account.Username) ? account : null;
+                }
+                if (!File.Exists(LegacyLastUserFilePath)) return null;
+                string username = File.ReadAllText(LegacyLastUserFilePath).Trim();
+                return FindLegacyUserDirectory(username) != null ? new LocalAccount(username, null) : null;
             }
             catch (Exception error)
             {
                 System.Diagnostics.Debug.WriteLine($"[Last User Load Error] {error}");
                 return null;
             }
+        }
+
+        internal static void MigrateLegacyAccount(LocalAccount account)
+        {
+            if (account.PublicId is not Guid id || id == Guid.Empty) return;
+            string destination = GetUserDirectory(account.CacheKey);
+            string? source = FindLegacyUserDirectory(account.Username);
+            if (source == null || Directory.Exists(destination)) return;
+            Directory.CreateDirectory(UsersBasePath);
+            Directory.Move(source, destination);
+        }
+
+        internal static bool HasLegacyLibraryToMigrate(LocalAccount account)
+            => account.PublicId.HasValue && !Directory.Exists(GetUserDirectory(account.CacheKey)) &&
+               FindLegacyUserDirectory(account.Username) != null;
+
+        private static string? FindLegacyUserDirectory(string username)
+        {
+            if (string.IsNullOrWhiteSpace(username) || !Directory.Exists(LegacyUsersBasePath)) return null;
+            string expected = SafeSegment(username, "Guest");
+            // An ordinal match prevents a distinct account from claiming a case-insensitive alias.
+            return Directory.EnumerateDirectories(LegacyUsersBasePath)
+                .FirstOrDefault(path => string.Equals(Path.GetFileName(path), expected, StringComparison.Ordinal) &&
+                    !File.GetAttributes(path).HasFlag(FileAttributes.ReparsePoint));
         }
 
         public static void ResetUserData(string username)
@@ -112,6 +148,16 @@ namespace EBookStudio.Helpers
                 System.Diagnostics.Debug.WriteLine($"[Reset Error] {error}");
                 throw new IOException("로컬 사용자 데이터를 초기화하지 못했습니다.", error);
             }
+        }
+
+        public static void ResetLocalLibrary(string cacheKey)
+        {
+            if (string.IsNullOrWhiteSpace(cacheKey)) return;
+            string root = GetUserDirectory(cacheKey);
+            if (!Directory.Exists(root)) return;
+            foreach (string directory in Directory.EnumerateDirectories(root))
+                Directory.Delete(directory, recursive: true);
+            File.Delete(Path.Combine(root, "library.json"));
         }
 
         private static string InitializeBasePath()

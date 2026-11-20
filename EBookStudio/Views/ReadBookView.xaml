@@ -130,6 +130,7 @@
                      BorderThickness="0"
                      Margin="60,80,60,60"
                      helpers:RichTextBoxHelper.Content="{Binding CurrentPageContent}"
+                     helpers:RichTextBoxHelper.PageNumber="{Binding CurrentPageNum, Mode=OneWay}"
                      Background="{Binding Source={x:Static services:SettingsService.Instance}, Path=Background}"
                      PreviewMouseLeftButtonDown="BookViewer_PreviewMouseLeftButtonDown"
                      PreviewMouseMove="BookViewer_PreviewMouseMove"
@@ -138,7 +139,7 @@
             <RichTextBox.Resources>
                 <Style TargetType="{x:Type Paragraph}">
                     <Setter Property="Margin" Value="0,0,0,20"/>
-                    <Setter Property="FontSize" Value="22"/>
+                    <Setter Property="FontSize" Value="{Binding Source={x:Static services:SettingsService.Instance}, Path=FontSize}"/>
                     <Setter Property="FontFamily" Value="{Binding Source={x:Static services:SettingsService.Instance}, Path=FontFamily}"/>
                     <Setter Property="LineHeight" Value="{Binding Source={x:Static services:SettingsService.Instance}, Path=LineHeight}"/>
                     <Setter Property="Foreground" Value="{Binding Source={x:Static services:SettingsService.Instance}, Path=Foreground}"/>
@@ -205,6 +206,7 @@
                     </StackPanel>
                 </Button>
                 <ToggleButton Command="{Binding ToggleBookmarkCommand}"
+                              ToolTip="{Binding NoteStatus}"
                               IsChecked="{Binding IsBookmarked, Mode=OneWay}"
                               HorizontalAlignment="Right" VerticalAlignment="Center"
                               Background="Transparent" BorderThickness="0" Cursor="Hand">
@@ -244,7 +246,7 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <Slider Minimum="1" Maximum="{Binding TotalPages}"
+                    <Slider Minimum="1" Maximum="{Binding TotalPages, Mode=OneWay}" IsEnabled="{Binding IsBookLoaded}"
                             Value="{Binding CurrentPageNum}"
                             IsSnapToTickEnabled="True" TickFrequency="1"
                             VerticalAlignment="Center"/>
@@ -265,7 +267,7 @@
                                     Value="{Binding CurrentPosition}"
                                     IsMoveToPointEnabled="True" Margin="5,5,5,0"/>
 
-                            <Button Grid.Row="1" Command="{Binding ToggleMusicCommand}"
+                            <Button Grid.Row="1" Command="{Binding ToggleMusicCommand}" ToolTip="{Binding MusicStatus}"
                                     Background="Transparent" BorderThickness="0" Cursor="Hand"
                                     HorizontalAlignment="Center" VerticalAlignment="Center">
                                 <TextBlock FontSize="24" FontWeight="Bold" Foreground="#007AFF">

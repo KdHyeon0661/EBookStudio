@@ -19,13 +19,21 @@ namespace EBookStudio.Helpers
         public static string GetContent(DependencyObject obj) => (string)obj.GetValue(ContentProperty);
         public static void SetContent(DependencyObject obj, string value) => obj.SetValue(ContentProperty, value);
 
+        public static readonly DependencyProperty PageNumberProperty = DependencyProperty.RegisterAttached(
+            "PageNumber", typeof(int), typeof(RichTextBoxHelper),
+            new FrameworkPropertyMetadata(0, (obj, _) => RenderContent(obj, GetContent(obj))));
+
+        public static int GetPageNumber(DependencyObject obj) => (int)obj.GetValue(PageNumberProperty);
+        public static void SetPageNumber(DependencyObject obj, int value) => obj.SetValue(PageNumberProperty, value);
+
         // 내용이 바뀌면(페이지 이동 등) RichTextBox를 업데이트하는 함수
         private static void OnContentChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
+            => RenderContent(d, e.NewValue as string);
+
+        private static void RenderContent(DependencyObject d, string? newText)
         {
             if (d is RichTextBox richTextBox)
             {
-                string newText = (string)e.NewValue;
-
                 // 기존 문서 비우기
                 richTextBox.Document.Blocks.Clear();
 

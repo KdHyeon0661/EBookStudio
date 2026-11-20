@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 using EBookStudio.Helpers;
 
 namespace EBookStudio.Models
@@ -27,6 +28,7 @@ namespace EBookStudio.Models
             {
                 _isAvailable = value;
                 OnPropertyChanged(nameof(IsAvailable));
+                NotifyCardAction();
             }
         }
 
@@ -60,6 +62,7 @@ namespace EBookStudio.Models
                 _jobId = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasPendingJob));
+                NotifyCardAction();
             }
         }
 
@@ -72,11 +75,66 @@ namespace EBookStudio.Models
                 _musicJobId = value;
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasPendingJob));
+                NotifyCardAction();
             }
         }
 
         public bool HasPendingJob => !string.IsNullOrWhiteSpace(JobId) ||
                                      !string.IsNullOrWhiteSpace(MusicJobId);
+
+        private bool _jobControlsAvailable;
+        [JsonIgnore]
+        public bool JobControlsAvailable
+        {
+            get => _jobControlsAvailable;
+            set
+            {
+                if (_jobControlsAvailable == value) return;
+                _jobControlsAvailable = value;
+                NotifyCardAction();
+            }
+        }
+
+        private bool _isCancellationRequested;
+        public bool IsCancellationRequested
+        {
+            get => _isCancellationRequested;
+            set
+            {
+                if (_isCancellationRequested == value) return;
+                _isCancellationRequested = value;
+                OnPropertyChanged();
+                NotifyCardAction();
+            }
+        }
+
+        [JsonIgnore]
+        public bool HasCancelableJob => (!IsAvailable && HasPendingJob) ||
+            (JobControlsAvailable && !IsMusicDownloadPending && !string.IsNullOrWhiteSpace(MusicJobId));
+
+        private bool _isMusicDownloadPending;
+        public bool IsMusicDownloadPending
+        {
+            get => _isMusicDownloadPending;
+            set
+            {
+                if (_isMusicDownloadPending == value) return;
+                _isMusicDownloadPending = value;
+                OnPropertyChanged();
+                NotifyCardAction();
+            }
+        }
+
+        [JsonIgnore]
+        public string CardActionText => HasCancelableJob
+            ? IsCancellationRequested ? "작업 취소 처리 중" : "작업 취소"
+            : "로컬 책 삭제";
+
+        private void NotifyCardAction()
+        {
+            OnPropertyChanged(nameof(HasCancelableJob));
+            OnPropertyChanged(nameof(CardActionText));
+        }
 
         public DateTime CreatedAt { get; set; } = DateTime.Now;
         public string CoverColor { get; set; } = "#FFFFFF";

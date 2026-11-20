@@ -33,6 +33,9 @@ namespace EBookStudio.Models
         public string music_filename { get; set; } = string.Empty;
         public string music_path { get; set; } = string.Empty;
         public List<LocalPage>? pages { get; set; }
+
+        internal string GetMusicReference()
+            => string.IsNullOrWhiteSpace(music_path) ? music_filename ?? string.Empty : music_path;
     }
 
     public class LocalPage

@@ -13,7 +13,7 @@ namespace EBookStudio.Services
     {
         Task<UploadResult> UploadBookAsync(string filePath, string username, string requestId);
         Task<ApiResult<byte[]>> DownloadBytesAsync(string url);
-        Task<ApiResult> DownloadFileAsync(string url, string localPath);
+        Task<ApiResult> DownloadFileAsync(string url, string localPath, CancellationToken cancellationToken = default);
         Task<ApiResult<List<string>>> GetMusicFileListAsync(string username, string bookFolder);
         Task<ApiResult<JobStatusResponse>> GetJobStatusAsync(string jobId);
         Task<ApiResult<JobStatusResponse>> CancelJobAsync(string jobId);
@@ -47,6 +47,7 @@ namespace EBookStudio.Services
     public interface INoteService
     {
         (List<NoteItem> Bookmarks, List<NoteItem> Highlights, List<NoteItem> Memos) LoadNotes(string username, string bookFolder);
+        void SaveNotes(string username, string bookFolder, BookNoteData data);
         void RemoveItem(string username, string bookFolder, NoteItem item);
         void AddItem(string username, string bookFolder, NoteItem item);
     }
@@ -60,18 +61,20 @@ namespace EBookStudio.Services
         string[] GetDirectories(string path);
         void DeleteFile(string path);
         void ResetUserData(string username);
+        void ResetLocalLibrary(string cacheKey);
     }
 
     public interface IAuthService
     {
-        Task<ApiResult> LoginAsync(string username, string password);
+        Task<ApiResult<LocalAccount>> LoginAsync(string username, string password, CancellationToken cancellationToken = default);
         Task LogoutAsync();
         Task<CodeSendResult> SendVerificationCodeAsync(string email);
         Task<ApiResult> VerifyCodeAsync(string email, string code);
         Task<ApiResult> RegisterAsync(string username, string password, string email, string code);
         Task<ApiResult<List<ServerBook>>> GetMyServerBooksAsync(string username);
         Task<ApiResult> DeleteServerBookAsync(string bookFolder);
-        Task<ApiResult> DownloadFileAsync(string url, string localPath);
+        Task<ApiResult<byte[]>> DownloadBytesAsync(string url);
+        Task<ApiResult> DownloadFileAsync(string url, string localPath, CancellationToken cancellationToken = default);
         Task<ApiResult<List<string>>> GetMusicFileListAsync(string username, string bookFolder);
         Task<ApiResult> ChangePasswordAsync(string currentPassword, string newPassword);
         Task<ApiResult> DeleteAccountAsync();
@@ -84,17 +87,13 @@ namespace EBookStudio.Services
         Task<ApiResult<UsageDashboard>> GetDashboardAsync(string username, int days = 7);
     }
 
-    public interface INetworkService
-    {
-        Task<bool> CheckInternetConnectionAsync();
-    }
-
     public interface IApiService
     {
         Task<ApiResult> RegisterAsync(string username, string password, string email, string code);
-        Task<ApiResult> LoginAsync(string username, string password);
+        Task<ApiResult<LocalAccount>> LoginAsync(string username, string password, CancellationToken cancellationToken = default);
         Task LogoutAsync();
-        void Logout();
+        IApiService? ForAccount(string cacheKey);
+        bool IsSessionCurrent { get; }
         Task<CodeSendResult> SendCodeAsync(string email, string purpose);
         Task<ApiResult> VerifyCodeAsync(string email, string code, string purpose);
         Task<ApiResult<string>> FindIdAsync(string email, string code);
@@ -104,7 +103,7 @@ namespace EBookStudio.Services
         Task<UploadResult> UploadBookAsync(string filePath, string username, string requestId);
         Task<ApiResult<JobStatusResponse>> GetJobStatusAsync(string jobId);
         Task<ApiResult<JobStatusResponse>> CancelJobAsync(string jobId);
-        Task<ApiResult> DownloadFileAsync(string url, string localPath);
+        Task<ApiResult> DownloadFileAsync(string url, string localPath, CancellationToken cancellationToken = default);
         Task<ApiResult<byte[]>> DownloadBytesAsync(string url);
         Task<ApiResult<List<string>>> GetMusicFileListAsync(string username, string bookFolder);
         Task<ApiResult<List<ServerBook>>> GetMyServerBooksAsync(string username);

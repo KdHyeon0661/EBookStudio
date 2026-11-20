@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Threading;
@@ -17,6 +18,8 @@ namespace EBookStudio.ViewModels
         private readonly IUsageService _usageService;
         private UsageSession? _appUsageSession;
         private string _usageUsername = string.Empty;
+        private LocalAccount? _account;
+        internal string LocalCacheKey => _account?.CacheKey ?? LoggedInUser;
 
         // ==========================================
         // 1. 상태 관리 변수
@@ -73,7 +76,18 @@ namespace EBookStudio.ViewModels
         public object? CurrentView
         {
             get => _currentView;
-            set { _currentView = value; OnPropertyChanged(); }
+            set
+            {
+                if (ReferenceEquals(_currentView, value)) return;
+                switch (_currentView)
+                {
+                    case LoginViewModel login: login.Clear(); break;
+                    case RegisterViewModel register: register.Clear(); break;
+                    case FindAccountViewModel recovery: recovery.Clear(); break;
+                }
+                _currentView = value;
+                OnPropertyChanged();
+            }
         }
 
         // ==========================================
@@ -100,7 +114,9 @@ namespace EBookStudio.ViewModels
         // ==========================================
         // 4. 생성자 (초기화)
         // ==========================================
-        public MainViewModel()
+        public MainViewModel() : this(initializeClient: true) { }
+
+        internal MainViewModel(bool initializeClient)
         {
             // [중요] 서비스 객체 초기화
             // 사용자님의 클래스명이 BookFileSystem, NoteService가 맞는지 꼭 확인하십시오.
@@ -114,15 +130,20 @@ namespace EBookStudio.ViewModels
                 if (Application.Current.MainWindow?.IsActive == true)
                     _appUsageSession?.AddActiveSeconds(15);
             };
-            _usageTimer.Start();
-            Application.Current.Exit += (s, e) => FinishAppUsageSession();
-
             _networkTimer = new DispatcherTimer();
             _networkTimer.Interval = TimeSpan.FromSeconds(3);
             _networkTimer.Tick += async (s, e) => await CheckNetworkStatus();
-            _networkTimer.Start();
-
-            _ = CheckNetworkStatus();
+            if (initializeClient)
+            {
+                _usageTimer.Start();
+                ApiService.SessionExpired += HandleSessionExpired;
+                Application.Current.Exit += (s, e) =>
+                {
+                    ApiService.SessionExpired -= HandleSessionExpired;
+                    FinishAppUsageSession();
+                };
+                _networkTimer.Start();
+            }
 
             LibraryVM = new LibraryViewModel(this);
             LoginVM = new LoginViewModel(this);
@@ -131,14 +152,14 @@ namespace EBookStudio.ViewModels
             MyPageVM = new MyPageViewModel(string.Empty);
 
             MyPageVM.RequestLogout += () => Logout();
-            MyPageVM.RequestLibraryImport += item => _ = LibraryVM.ImportDownloadedBook(item);
+            MyPageVM.RequestLibraryImport += (item, cacheKey) => _ = LibraryVM.ImportDownloadedBook(item, cacheKey);
+            MyPageVM.RequestLibraryReset += () => LibraryVM.ResetLocalLibraryAsync();
+            MyPageVM.RequestReadingHistoryReset += () => _ = LibraryVM.ResetReadingProgressAsync();
 
-            string? lastUser = FileHelper.GetLastUser();
-            if (!string.IsNullOrEmpty(lastUser))
+            if (initializeClient && FileHelper.GetLastAccount() is { } lastAccount)
             {
-                LoggedInUser = lastUser;
-                MyPageVM.Username = lastUser;
-                StartUsageForUser(lastUser);
+                SetAccount(lastAccount);
+                StartUsageForUser(LocalCacheKey);
                 _ = LibraryVM.LoadLibrary();
             }
 
@@ -162,6 +183,7 @@ namespace EBookStudio.ViewModels
             );
 
             LogoutCommand = new RelayCommand(o => Logout());
+            if (initializeClient) _ = CheckNetworkStatus();
         }
 
         // ==========================================
@@ -173,10 +195,11 @@ namespace EBookStudio.ViewModels
             if (IsNetworkAvailable != isConnected)
             {
                 IsNetworkAvailable = isConnected;
+                LibraryVM.UpdateJobControls();
                 if (isConnected && IsLoggedIn && !string.IsNullOrWhiteSpace(LoggedInUser))
                 {
                     RotateAppUsageSession();
-                    await _usageService.SyncAsync(LoggedInUser);
+                    await _usageService.SyncAsync(LocalCacheKey);
                 }
             }
         }
@@ -216,7 +239,6 @@ namespace EBookStudio.ViewModels
         {
             IsTopBarVisible = true;
             RotateAppUsageSession();
-            MyPageVM.Username = LoggedInUser;
             CurrentView = MyPageVM;
             _ = MyPageVM.RefreshUsageAsync();
             IsAuthView = true;
@@ -238,16 +260,40 @@ namespace EBookStudio.ViewModels
             IsAuthView = true;
         }
 
-        public void SetLoginSuccess(string username)
+        public void SetLoginSuccess(LocalAccount account)
         {
+            FinishAppUsageSession();
+            try
+            {
+                if (FileHelper.HasLegacyLibraryToMigrate(account) && MessageBox.Show(
+                    "이 PC에 같은 이름으로 저장된 예전 보관함이 있습니다. 본인의 보관함이면 현재 계정으로 옮기시겠습니까?",
+                    "기존 보관함", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                    FileHelper.MigrateLegacyAccount(account);
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Local cache migration] {error}");
+                MessageBox.Show("기존 로컬 서재를 새 계정 폴더로 옮기지 못했습니다. 원래 위치에 보관되어 있습니다.");
+            }
+            SetAccount(account);
             IsLoggedIn = true;
-            LoggedInUser = username;
-            MyPageVM.Username = username;
-            FileHelper.SaveLastUser(username);
-            StartUsageForUser(username);
-            _ = _usageService.SyncAsync(username);
+            FileHelper.SaveLastAccount(account);
+            StartUsageForUser(LocalCacheKey);
+            _ = _usageService.SyncAsync(LocalCacheKey);
             _ = LibraryVM.LoadLibrary();
             NavigateToHome();
+        }
+
+        private void HandleSessionExpired(LocalAccount account)
+        {
+            Application.Current.Dispatcher.BeginInvoke(new Action(() =>
+            {
+                if (_account?.CacheKey != account.CacheKey || new ApiService().ForAccount(account.CacheKey) != null) return;
+                IsLoggedIn = false;
+                LibraryVM.StopMonitoring();
+                LibraryVM.UpdateJobControls();
+                MyPageVM.SetAccount(LoggedInUser, LocalCacheKey);
+            }));
         }
 
         public void Logout()
@@ -255,13 +301,19 @@ namespace EBookStudio.ViewModels
             FinishAppUsageSession();
             LibraryVM.StopMonitoring();
             _ = new AuthService().LogoutAsync();
-            FileHelper.SaveLastUser(string.Empty);
+            FileHelper.SaveLastAccount(null);
             IsTopBarVisible = true;
             IsLoggedIn = false;
-            LoggedInUser = string.Empty;
-            MyPageVM.Username = string.Empty;
+            SetAccount(null);
             _ = LibraryVM.LoadLibrary();
             NavigateToHome();
+        }
+
+        private void SetAccount(LocalAccount? account)
+        {
+            _account = account;
+            LoggedInUser = account?.Username ?? string.Empty;
+            MyPageVM.SetAccount(LoggedInUser, LocalCacheKey);
         }
 
         private void StartUsageForUser(string username)

@@ -32,10 +32,9 @@
                     </Grid.ColumnDefinitions>
                     <TextBox Grid.Column="0" Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" 
                              Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD"
-                             IsEnabled="{Binding IsEmailSent, Converter={StaticResource InverseBoolConverter}}"/>
-                    <Button Grid.Column="1" Content="인증 요청" Height="40" Padding="15,0" Margin="10,0,0,0"
-                            Command="{Binding SendCodeCommand}" Background="#EEE" BorderThickness="0"
-                            IsEnabled="{Binding IsEmailSent, Converter={StaticResource InverseBoolConverter}}">
+                             />
+                    <Button Grid.Column="1" Content="{Binding SendCodeLabel}" Height="40" Padding="15,0" Margin="10,0,0,0"
+                            Command="{Binding SendCodeCommand}" Background="#EEE" BorderThickness="0">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="4"/>

@@ -89,7 +89,7 @@
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="Auto"/>
                                 </Grid.ColumnDefinitions>
-                                <ProgressBar Grid.Column="0" Value="{Binding Book.ProgressValue}"
+                                <ProgressBar Grid.Column="0" Value="{Binding Book.ProgressValue, Mode=OneWay}"
                                              Maximum="100" Height="7" VerticalAlignment="Center"
                                              Foreground="#007AFF" Background="#E9ECEF" BorderThickness="0"/>
                                 <TextBlock Grid.Column="1" Text="{Binding Book.ProgressText}"

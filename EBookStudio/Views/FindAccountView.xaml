@@ -21,8 +21,8 @@
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <TextBox Grid.Column="0" Text="{Binding Email}" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1"/>
-                    <Button Grid.Column="1" Content="인증번호 발송" Command="{Binding SendCodeCommand}" Margin="10,0,0,0" Padding="10,0" Height="40" Background="#EEE" BorderThickness="0">
+                    <TextBox Grid.Column="0" Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1"/>
+                    <Button Grid.Column="1" Content="{Binding SendCodeLabel}" Command="{Binding SendCodeCommand}" Margin="10,0,0,0" Padding="10,0" Height="40" Background="#EEE" BorderThickness="0">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="4"/>
@@ -38,7 +38,7 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBox Grid.Column="0" Text="{Binding Code}" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1"/>
+                        <TextBox Grid.Column="0" Text="{Binding Code, UpdateSourceTrigger=PropertyChanged}" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1"/>
                         <Button Grid.Column="1" Content="확인" Command="{Binding VerifyCodeCommand}" Margin="10,0,0,0" Padding="15,0" Height="40" Background="#333" Foreground="White" BorderThickness="0">
                             <Button.Resources>
                                 <Style TargetType="Border">
@@ -58,9 +58,11 @@
                     </StackPanel>
 
                     <TextBlock Text="새 비밀번호 설정" Foreground="#666" Margin="0,0,0,5"/>
-                    <TextBox Text="{Binding NewPassword}" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1" Margin="0,0,0,10"/>
+                    <PasswordBox x:Name="NewPasswordBox" Height="40" VerticalContentAlignment="Center" Padding="10,0" BorderBrush="#DDD" BorderThickness="1" Margin="0,0,0,10"/>
 
-                    <Button Content="비밀번호 변경하기" Command="{Binding ResetPasswordCommand}" Height="45" Background="#333" Foreground="White" BorderThickness="0" FontWeight="SemiBold">
+                    <Button Content="비밀번호 변경하기" Command="{Binding ResetPasswordCommand}"
+                            CommandParameter="{Binding ElementName=NewPasswordBox}" Height="45"
+                            Background="#333" Foreground="White" BorderThickness="0" FontWeight="SemiBold">
                         <Button.Resources>
                             <Style TargetType="Border">
                                 <Setter Property="CornerRadius" Value="6"/>

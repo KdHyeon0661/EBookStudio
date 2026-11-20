@@ -2,6 +2,7 @@ using EBookStudio.Helpers;
 using EBookStudio.Models;
 using EBookStudio.ViewModels;
 using System;
+using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Documents;
@@ -58,13 +59,18 @@ namespace EBookStudio.Views
                 if (BookViewer.Document == null) return;
 
                 // 하이라이트 복구
-                foreach (var hl in currentHighlights)
+                foreach (var hl in currentHighlights.Reverse())
                 {
-                    TextRange? foundRange = FindTextRangeInDocument(BookViewer.Document, hl.Content);
+                    TextRange? foundRange = TextRangeLocator.Find(
+                        BookViewer.Document, hl.Content, hl.TextOffset);
                     if (foundRange != null)
                     {
                         try
                         {
+                            // Old note files could contain two styles for the same location.
+                            // Clear both style families so the most recent saved annotation wins.
+                            foundRange.ApplyPropertyValue(TextElement.BackgroundProperty, Brushes.Transparent);
+                            foundRange.ApplyPropertyValue(Inline.TextDecorationsProperty, null);
                             if (hl.Color == "Underline")
                                 foundRange.ApplyPropertyValue(Inline.TextDecorationsProperty, TextDecorations.Underline);
                             else
@@ -83,7 +89,8 @@ namespace EBookStudio.Views
                 {
                     if (!string.IsNullOrEmpty(memo.OriginalText))
                     {
-                        TextRange? foundRange = FindTextRangeInDocument(BookViewer.Document, memo.OriginalText);
+                        TextRange? foundRange = TextRangeLocator.Find(
+                            BookViewer.Document, memo.OriginalText, memo.TextOffset);
                         if (foundRange != null)
                             Dispatcher.Invoke(() => ApplyMemoLink(foundRange, memo.Content));
                     }
@@ -98,9 +105,23 @@ namespace EBookStudio.Views
         // =========================================================
         private void OnHighlightColorClick(object sender, RoutedEventArgs e)
         {
-            if (sender is MenuItem menuItem && !BookViewer.Selection.IsEmpty)
+            if (sender is MenuItem menuItem && DataContext is ReadBookViewModel { IsBookLoaded: true } vm &&
+                !BookViewer.Selection.IsEmpty)
             {
                 string colorString = menuItem.Tag as string ?? "Transparent";
+                string selectedText = BookViewer.Selection.Text.Trim();
+                if (string.IsNullOrEmpty(selectedText)) return;
+                int textOffset = GetSelectionTextOffset(BookViewer.Selection);
+                var item = new NoteItem
+                {
+                    Type = "Highlight", Color = colorString, Content = selectedText, TextOffset = textOffset
+                };
+                bool saved = colorString == "Transparent" ? vm.RemoveNoteData(item) : vm.SaveNoteData(item);
+                if (!saved) return;
+
+                // A color change replaces the existing style instead of combining styles.
+                BookViewer.Selection.ApplyPropertyValue(TextElement.BackgroundProperty, Brushes.Transparent);
+                BookViewer.Selection.ApplyPropertyValue(Inline.TextDecorationsProperty, null);
 
                 if (colorString == "Underline")
                 {
@@ -108,8 +129,7 @@ namespace EBookStudio.Views
                 }
                 else if (colorString == "Transparent")
                 {
-                    BookViewer.Selection.ApplyPropertyValue(TextElement.BackgroundProperty, Brushes.Transparent);
-                    BookViewer.Selection.ApplyPropertyValue(Inline.TextDecorationsProperty, null);
+                    // The base style was already restored above.
                 }
                 else
                 {
@@ -118,21 +138,13 @@ namespace EBookStudio.Views
                     BookViewer.Selection.ApplyPropertyValue(TextElement.BackgroundProperty, highlightBrush);
                 }
 
-                if (DataContext is ReadBookViewModel vm && colorString != "Transparent")
-                {
-                    vm.SaveNoteData(new NoteItem
-                    {
-                        Type = "Highlight",
-                        Color = colorString,
-                        Content = BookViewer.Selection.Text.Trim()
-                    });
-                }
                 BookViewer.Selection.Select(BookViewer.Selection.End, BookViewer.Selection.End);
             }
         }
 
         private void OnContextMenuMemoClick(object sender, RoutedEventArgs e)
         {
+            if (DataContext is not ReadBookViewModel { IsBookLoaded: true }) return;
             if (!BookViewer.Selection.IsEmpty)
             {
                 _pendingMemoRange = new TextRange(BookViewer.Selection.Start, BookViewer.Selection.End);
@@ -154,21 +166,16 @@ namespace EBookStudio.Views
             string content = MemoTextBox.Text;
             if (string.IsNullOrWhiteSpace(content)) return;
 
-            if (_pendingMemoRange != null && !_pendingMemoRange.IsEmpty)
+            if (_pendingMemoRange != null && !_pendingMemoRange.IsEmpty && DataContext is ReadBookViewModel vm)
             {
+                if (!vm.SaveNoteData(new NoteItem
+                {
+                    Type = "Memo", Content = content, OriginalText = _pendingMemoRange.Text,
+                    TextOffset = GetTextOffset(_pendingMemoRange.Start)
+                })) return;
                 _isRendering = true;
                 ApplyMemoLink(_pendingMemoRange, content);
                 _isRendering = false;
-
-                if (DataContext is ReadBookViewModel vm)
-                {
-                    vm.SaveNoteData(new NoteItem
-                    {
-                        Type = "Memo",
-                        Content = content,
-                        OriginalText = _pendingMemoRange.Text
-                    });
-                }
             }
             MemoInputOverlay.Visibility = Visibility.Collapsed;
             _pendingMemoRange = null;
@@ -201,37 +208,17 @@ namespace EBookStudio.Views
             }
         }
 
-        private TextRange? FindTextRangeInDocument(FlowDocument doc, string textToFind)
+        private int GetSelectionTextOffset(TextSelection selection)
         {
-            if (string.IsNullOrEmpty(textToFind)) return null;
-            TextRange fullRange = new TextRange(doc.ContentStart, doc.ContentEnd);
-            string fullText = fullRange.Text;
-            int index = fullText.IndexOf(textToFind);
-            if (index != -1)
-            {
-                TextPointer? start = GetTextPointerAtOffset(doc.ContentStart, index);
-                TextPointer? end = start == null ? null : GetTextPointerAtOffset(start, textToFind.Length);
-                if (start != null && end != null) return new TextRange(start, end);
-            }
-            return null;
+            string rawText = selection.Text;
+            int leadingWhitespace = rawText.Length - rawText.TrimStart().Length;
+            return GetTextOffset(selection.Start) + leadingWhitespace;
         }
 
-        private TextPointer? GetTextPointerAtOffset(TextPointer start, int offset)
+        private int GetTextOffset(TextPointer position)
         {
-            if (start == null) return null;
-            TextPointer current = start; int count = 0;
-            while (current != null)
-            {
-                if (current.GetPointerContext(LogicalDirection.Forward) == TextPointerContext.Text)
-                {
-                    string textRun = current.GetTextInRun(LogicalDirection.Forward);
-                    if (count + textRun.Length > offset) return current.GetPositionAtOffset(offset - count);
-                    count += textRun.Length;
-                }
-                current = current.GetNextContextPosition(LogicalDirection.Forward);
-                if (current != null && current.CompareTo(BookViewer.Document.ContentEnd) == 0) break;
-            }
-            return null;
+            if (BookViewer.Document == null) return -1;
+            return TextRangeLocator.GetTextOffset(BookViewer.Document, position);
         }
 
         private void BookViewer_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e) { _mouseDownPosition = e.GetPosition(this); _isDragging = false; }

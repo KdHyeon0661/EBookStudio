@@ -45,6 +45,7 @@ namespace EBookStudio.Helpers
         public static async Task WriteStreamAsync(string path, Stream source,
                                                    CancellationToken cancellationToken = default)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             string tempPath = Prepare(path);
             try
             {
@@ -56,6 +57,7 @@ namespace EBookStudio.Helpers
                     await target.FlushAsync(cancellationToken);
                     target.Flush(flushToDisk: true);
                 }
+                cancellationToken.ThrowIfCancellationRequested();
                 Commit(tempPath, path);
             }
             finally

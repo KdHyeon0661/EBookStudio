@@ -11,6 +11,7 @@ namespace EBookStudio.ViewModels
         private readonly MainViewModel _mainVM;
         private readonly IAuthService _authService;
         private readonly IDialogService _dialogService;
+        private CancellationTokenSource? _pendingLogin;
 
         private string _username = string.Empty;
         public string Username
@@ -44,7 +45,8 @@ namespace EBookStudio.ViewModels
             var passwordBox = parameter as PasswordBox;
             var password = passwordBox?.Password;
 
-            if (string.IsNullOrWhiteSpace(Username) || string.IsNullOrWhiteSpace(password))
+            string requestedUsername = Username.Trim();
+            if (string.IsNullOrWhiteSpace(requestedUsername) || string.IsNullOrWhiteSpace(password))
             {
                 // [수정] MessageBox -> _dialogService
                 _dialogService.ShowMessage("아이디와 비밀번호를 입력하세요.");
@@ -52,13 +54,22 @@ namespace EBookStudio.ViewModels
             }
 
             // [수정] ApiService -> _authService
-            ApiResult result = await _authService.LoginAsync(Username, password);
-
-            if (result.Success)
+            using var pending = new CancellationTokenSource();
+            _pendingLogin = pending;
+            ApiResult<LocalAccount> result;
+            try
             {
-                // [수정] MessageBox -> _dialogService
-                _dialogService.ShowMessage($"로그인 성공! 환영합니다 {Username}님.");
-                _mainVM.SetLoginSuccess(Username);
+                result = await _authService.LoginAsync(requestedUsername, password, pending.Token);
+                if (pending.IsCancellationRequested) return;
+            }
+            catch (OperationCanceledException) when (pending.IsCancellationRequested) { return; }
+            finally { _pendingLogin = null; }
+
+            if (result.Success && result.Value is { } account)
+            {
+                passwordBox?.Clear();
+                _mainVM.SetLoginSuccess(account);
+                _dialogService.ShowMessage($"로그인 성공! 환영합니다 {account.Username}님.");
             }
             else
             {
@@ -69,6 +80,7 @@ namespace EBookStudio.ViewModels
 
         public void Clear()
         {
+            _pendingLogin?.Cancel();
             Username = string.Empty;
         }
     }

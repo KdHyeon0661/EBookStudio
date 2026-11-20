@@ -1,4 +1,5 @@
 using EBookStudio.Helpers;
+using System.Windows.Media;
 
 namespace EBookStudio.Models
 {
@@ -18,8 +19,11 @@ namespace EBookStudio.Models
         public string TextFile { get; set; } = string.Empty;
         public string Author { get; set; } = string.Empty;
 
-        public string DisplayCoverUrl => string.IsNullOrEmpty(CoverUrl)
-            ? "/Images/default_cover.png"
-            : $"{ApiConfig.BaseUrl}{CoverUrl}";
+        private ImageSource? _coverImage;
+        public ImageSource? CoverImage
+        {
+            get => _coverImage;
+            internal set { _coverImage = value; OnPropertyChanged(); }
+        }
     }
 }

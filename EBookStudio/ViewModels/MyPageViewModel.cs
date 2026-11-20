@@ -8,6 +8,7 @@ using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Media.Imaging;
 using EBookStudio.Helpers;
 using EBookStudio.Services;
 using EBookStudio.Models;
@@ -23,25 +24,31 @@ namespace EBookStudio.ViewModels
         private readonly IUsageService _usageService;
 
         private string _username = string.Empty;
-        public string Username
+        private string _cacheKey = string.Empty;
+        private long _accountVersion;
+        private CancellationTokenSource _bookTransfers = new();
+        private bool _isResettingLibrary;
+        public string Username => _username;
+
+        internal void SetAccount(string username, string cacheKey)
         {
-            get => _username;
-            set
-            {
-                if (string.Equals(_username, value, StringComparison.Ordinal)) return;
-                _username = value;
-                OnPropertyChanged();
-                TotalAppUsage = "0분";
-                TotalReadingUsage = "0분";
-                ReadingSessions = "0회";
-                BooksRead = "0권";
-                PageTurns = "0회";
-                ActiveDays = "0일";
-                BookUsageItems.Clear();
-                DailyUsageItems.Clear();
-                NotifyUsageCollections();
-                UsageStatus = string.IsNullOrWhiteSpace(value) ? "로그인 후 확인할 수 있습니다." : "동기화 대기 중";
-            }
+            _accountVersion++;
+            CancelBookTransfers();
+            _username = username;
+            _cacheKey = cacheKey;
+            OnPropertyChanged(nameof(Username));
+            ServerDeleteList.Clear();
+            ServerDownloadList.Clear();
+            TotalAppUsage = "0분";
+            TotalReadingUsage = "0분";
+            ReadingSessions = "0회";
+            BooksRead = "0권";
+            PageTurns = "0회";
+            ActiveDays = "0일";
+            BookUsageItems.Clear();
+            DailyUsageItems.Clear();
+            NotifyUsageCollections();
+            UsageStatus = string.IsNullOrWhiteSpace(cacheKey) ? "로그인 후 확인할 수 있습니다." : "동기화 대기 중";
         }
 
         private string _totalAppUsage = "0분";
@@ -83,7 +90,9 @@ namespace EBookStudio.ViewModels
 
         public string AppVersion => "v1.0.0 (Build 2025)";
         public event Action? RequestLogout;
-        public event Action<ServerBookItem>? RequestLibraryImport;
+        public event Action<ServerBookItem, string>? RequestLibraryImport;
+        public event Func<Task>? RequestLibraryReset;
+        public event Action? RequestReadingHistoryReset;
 
         public ObservableCollection<ServerBookItem> ServerDeleteList { get; } = new ObservableCollection<ServerBookItem>();
         public ObservableCollection<ServerBookItem> ServerDownloadList { get; } = new ObservableCollection<ServerBookItem>();
@@ -109,7 +118,7 @@ namespace EBookStudio.ViewModels
                                IBookFileSystem? fileSystem = null,
                                IUsageService? usageService = null)
         {
-            Username = username;
+            SetAccount(username, username);
             _authService = authService ?? new AuthService();
             _dialogService = dialogService ?? new DialogService();
             _fileSystem = fileSystem ?? new BookFileSystem();
@@ -118,7 +127,7 @@ namespace EBookStudio.ViewModels
             ChangePasswordCommand = new AsyncRelayCommand(async o => await ExecuteChangePassword(o));
             RefreshUsageCommand = new AsyncRelayCommand(async o => await RefreshUsageAsync());
             ResetHistoryCommand = new RelayCommand(ExecuteResetHistory);
-            ResetUserDataCommand = new RelayCommand(ExecuteResetUserData);
+            ResetUserDataCommand = new AsyncRelayCommand(_ => ExecuteResetUserData());
 
             DeleteAccountCommand = new AsyncRelayCommand(async o => await ExecuteDeleteAccount());
             LoadServerDataCommand = new AsyncRelayCommand(async o => await LoadServerBooks());
@@ -148,11 +157,12 @@ namespace EBookStudio.ViewModels
 
         public async Task RefreshUsageAsync()
         {
-            string requestedUsername = Username;
-            if (string.IsNullOrWhiteSpace(requestedUsername)) return;
+            string cacheKey = _cacheKey;
+            long version = _accountVersion;
+            if (string.IsNullOrWhiteSpace(cacheKey)) return;
             UsageStatus = "동기화 중...";
-            ApiResult<UsageDashboard> result = await _usageService.GetDashboardAsync(requestedUsername, 7);
-            if (!string.Equals(Username, requestedUsername, StringComparison.Ordinal)) return;
+            ApiResult<UsageDashboard> result = await _usageService.GetDashboardAsync(cacheKey, 7);
+            if (version != _accountVersion) return;
             if (!result.Success || result.Value == null)
             {
                 UsageStatus = "오프라인 · 기록은 기기에 안전하게 대기 중";
@@ -168,7 +178,7 @@ namespace EBookStudio.ViewModels
             PageTurns = $"{summary.PageTurnCount:N0}회";
             ActiveDays = $"{summary.ActiveDayCount:N0}일";
 
-            Dictionary<string, string> titles = LoadBookTitles(requestedUsername);
+            Dictionary<string, string> titles = LoadBookTitles(cacheKey);
             BookUsageItems.Clear();
             foreach (BookUsageSummaryResponse book in dashboard.Books)
             {
@@ -182,14 +192,14 @@ namespace EBookStudio.ViewModels
 
             DailyUsageItems.Clear();
             long maxDailySeconds = Math.Max(1, dashboard.Daily.Daily
-                .Select(day => day.AppSeconds + day.ReadingSeconds).DefaultIfEmpty(0).Max());
+                .Select(day => Math.Max(day.AppSeconds, day.ReadingSeconds)).DefaultIfEmpty(0).Max());
             foreach (DailyUsageResponse day in dashboard.Daily.Daily)
             {
                 DailyUsageItems.Add(new DailyUsageDisplayItem(
                     FormatDate(day.Date), ScaleBar(day.AppSeconds, maxDailySeconds),
                     ScaleBar(day.ReadingSeconds, maxDailySeconds), FormatDuration(day.AppSeconds),
                     FormatDuration(day.ReadingSeconds),
-                    FormatDuration(day.AppSeconds + day.ReadingSeconds)));
+                    FormatDuration(Math.Max(day.AppSeconds, day.ReadingSeconds))));
             }
             NotifyUsageCollections();
             UsageStatus = dashboard.IsCached
@@ -255,11 +265,14 @@ namespace EBookStudio.ViewModels
             if (newBox.Password != confirmBox.Password)
             { _dialogService.ShowMessage("비밀번호 확인이 일치하지 않습니다."); return; }
 
+            long version = _accountVersion;
             ApiResult result = await _authService.ChangePasswordAsync(currentBox.Password, newBox.Password);
+            if (version != _accountVersion) return;
             if (!result.Success)
             { _dialogService.ShowMessage($"비밀번호 변경 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}"); return; }
             currentBox.Password = ""; newBox.Password = ""; confirmBox.Password = "";
-            _dialogService.ShowMessage("비밀번호가 변경되었습니다.");
+            _dialogService.ShowMessage("비밀번호가 변경되었습니다. 새 비밀번호로 다시 로그인해주세요.");
+            RequestLogout?.Invoke();
         }
 
         private void ExecuteResetHistory(object? obj)
@@ -268,7 +281,7 @@ namespace EBookStudio.ViewModels
             {
                 try
                 {
-                    string userDir = FileHelper.GetUserDirectory(Username);
+                    string userDir = FileHelper.GetUserDirectory(_cacheKey);
                     if (_fileSystem.DirectoryExists(userDir))
                     {
                         var bookDirs = _fileSystem.GetDirectories(userDir);
@@ -278,6 +291,7 @@ namespace EBookStudio.ViewModels
                             if (_fileSystem.FileExists(progressPath)) _fileSystem.DeleteFile(progressPath);
                         }
                     }
+                    RequestReadingHistoryReset?.Invoke();
                     _dialogService.ShowMessage("진도율이 초기화되었습니다.");
                 }
                 catch (Exception ex)
@@ -287,37 +301,51 @@ namespace EBookStudio.ViewModels
             }
         }
 
-        private void ExecuteResetUserData(object? obj)
+        private async Task ExecuteResetUserData()
         {
-            if (_dialogService.ShowConfirm("보관함을 완전히 비우시겠습니까?\n내 컴퓨터의 모든 책 파일이 삭제됩니다.", "경고"))
+            string cacheKey = _cacheKey;
+            long version = _accountVersion;
+            if (string.IsNullOrWhiteSpace(cacheKey) ||
+                !_dialogService.ShowConfirm("이 PC의 보관함을 비우시겠습니까?\n책과 해당 책의 노트가 삭제됩니다.", "경고") ||
+                version != _accountVersion) return;
+            _isResettingLibrary = true;
+            CancelBookTransfers();
+            try
             {
-                try
-                {
-                    _fileSystem.ResetUserData(Username);
-                    _dialogService.ShowMessage("보관함이 비워졌습니다.");
-                }
-                catch (IOException error)
-                {
-                    _dialogService.ShowMessage(error.Message);
-                }
+                if (RequestLibraryReset is { } reset) await reset();
+                else _fileSystem.ResetLocalLibrary(cacheKey);
+                if (version == _accountVersion) _dialogService.ShowMessage("보관함이 비워졌습니다.");
             }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            { _dialogService.ShowMessage($"보관함을 비우지 못했습니다. {error.Message}"); }
+            finally { _isResettingLibrary = false; }
+        }
+
+        private void CancelBookTransfers()
+        {
+            var previous = _bookTransfers;
+            _bookTransfers = new CancellationTokenSource();
+            previous.Cancel();
+            previous.Dispose();
         }
 
         private async Task ExecuteDeleteAccount()
         {
             if (!_dialogService.ShowConfirm("정말로 탈퇴하시겠습니까?\n서버 계정과 모든 도서가 삭제되며 복구할 수 없습니다.", "탈퇴"))
                 return;
+            string deletedCacheKey = _cacheKey;
+            long version = _accountVersion;
             ApiResult result = await _authService.DeleteAccountAsync();
+            if (version != _accountVersion) return;
             if (!result.Success)
             {
                 _dialogService.ShowMessage($"계정 삭제 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
                 return;
             }
-            string deletedUsername = Username;
             RequestLogout?.Invoke();
             try
             {
-                _fileSystem.ResetUserData(deletedUsername);
+                _fileSystem.ResetUserData(deletedCacheKey);
                 _dialogService.ShowMessage("계정과 서버 데이터가 삭제되었습니다.");
             }
             catch (IOException error)
@@ -328,7 +356,10 @@ namespace EBookStudio.ViewModels
 
         private async Task LoadServerBooks()
         {
-            ApiResult<List<ServerBook>> result = await _authService.GetMyServerBooksAsync(Username);
+            long version = _accountVersion;
+            string username = Username;
+            ApiResult<List<ServerBook>> result = await _authService.GetMyServerBooksAsync(username);
+            if (version != _accountVersion) return;
             if (!result.Success)
             {
                 _dialogService.ShowMessage($"서버 보관함 조회 실패: {result.Error?.UserMessage ?? "요청을 처리하지 못했습니다."}");
@@ -337,6 +368,7 @@ namespace EBookStudio.ViewModels
             ServerDeleteList.Clear();
             ServerDownloadList.Clear();
 
+            var coverTargets = new List<(ServerBookItem, ServerBookItem)>();
             foreach (var b in result.Value ?? new List<ServerBook>())
             {
                 // [수정] Folder(UUID) 정보도 같이 저장해야 함
@@ -353,7 +385,7 @@ namespace EBookStudio.ViewModels
                 ServerDeleteList.Add(item);
 
                 // 다운로드 리스트에는 객체를 새로 만들어야 UI 상태(IsSelected 등)가 꼬이지 않음
-                ServerDownloadList.Add(new ServerBookItem
+                var downloadItem = new ServerBookItem
                 {
                     Title = b.title,
                     Folder = b.folder,
@@ -361,7 +393,37 @@ namespace EBookStudio.ViewModels
                     CoverFile = b.cover_file,
                     TextFile = b.text_file,
                     Author = b.author
-                });
+                };
+                ServerDownloadList.Add(downloadItem);
+                if (!string.IsNullOrWhiteSpace(b.cover_file)) coverTargets.Add((item, downloadItem));
+            }
+            _ = LoadServerCoversAsync(coverTargets, username, version);
+        }
+
+        private async Task LoadServerCoversAsync(List<(ServerBookItem DeleteItem, ServerBookItem DownloadItem)> items,
+                                                 string username, long version)
+        {
+            foreach (var (deleteItem, downloadItem) in items)
+            {
+                if (version != _accountVersion || !ServerDownloadList.Contains(downloadItem)) return;
+                try
+                {
+                    var result = await _authService.DownloadBytesAsync(FileUrl(username, downloadItem.Folder, downloadItem.CoverFile));
+                    if (version != _accountVersion) return;
+                    if (!result.Success || result.Value is not { Length: > 0 } bytes) continue;
+                    using var imageBytes = new MemoryStream(bytes, writable: false);
+                    var image = new BitmapImage();
+                    image.BeginInit();
+                    image.CacheOption = BitmapCacheOption.OnLoad;
+                    image.DecodePixelHeight = 100;
+                    image.StreamSource = imageBytes;
+                    image.EndInit();
+                    image.Freeze();
+                    deleteItem.CoverImage = downloadItem.CoverImage = image;
+                }
+                catch (Exception error) when (error is IOException or ArgumentException or
+                                             NotSupportedException or InvalidOperationException or FormatException)
+                { System.Diagnostics.Debug.WriteLine($"[Book cover] {error.Message}"); }
             }
         }
 
@@ -370,11 +432,13 @@ namespace EBookStudio.ViewModels
             if (items.Count == 0) return;
             if (!_dialogService.ShowConfirm($"{items.Count}개의 책을 서버에서 삭제하시겠습니까?\n(음악 파일은 보존됩니다)", "서버 삭제")) return;
 
+            long version = _accountVersion;
             int succeeded = 0;
             ApiError? lastError = null;
             foreach (var item in items)
             {
                 ApiResult result = await _authService.DeleteServerBookAsync(item.Folder);
+                if (version != _accountVersion) return;
                 if (result.Success)
                 {
                     succeeded++;
@@ -394,43 +458,193 @@ namespace EBookStudio.ViewModels
 
         private async Task ExecuteDownloadServerBooks(List<ServerBookItem> items)
         {
-            if (items.Count == 0) return;
+            if (items.Count == 0 || _isResettingLibrary) return;
+            string username = Username;
+            string cacheKey = _cacheKey;
+            long version = _accountVersion;
+            CancellationToken cancellationToken = _bookTransfers.Token;
             int succeeded = 0;
             foreach (var item in items)
             {
-                if (!await ProcessDownloadBook(item)) continue;
+                bool downloaded = await ProcessDownloadBook(item, username, cacheKey, cancellationToken);
+                if (version != _accountVersion || cancellationToken.IsCancellationRequested) return;
+                if (!downloaded) continue;
                 succeeded++;
-                RequestLibraryImport?.Invoke(item);
+                RequestLibraryImport?.Invoke(item, cacheKey);
             }
             _dialogService.ShowMessage($"{succeeded}/{items.Count}개 도서를 다운로드했습니다.");
         }
 
-        private async Task<bool> ProcessDownloadBook(ServerBookItem item)
+        private async Task<bool> ProcessDownloadBook(ServerBookItem item, string username, string cacheKey,
+                                                      CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(item.TextFile) || string.IsNullOrWhiteSpace(item.CoverFile))
+            if (cancellationToken.IsCancellationRequested || string.IsNullOrWhiteSpace(cacheKey)) return false;
+            if (string.IsNullOrWhiteSpace(item.TextFile))
             {
                 _dialogService.ShowMessage($"'{item.Title}'의 분석 결과가 아직 준비되지 않았습니다.");
                 return false;
             }
 
-            string serverJsonUrl = FileUrl(Username, item.Folder, item.TextFile);
-            string localJsonPath = FileHelper.GetLocalFilePath(Username, item.Folder, "", item.TextFile);
-            ApiResult jsonResult = await _authService.DownloadFileAsync(serverJsonUrl, localJsonPath);
-            if (!jsonResult.Success)
+            string stagingRoot = Path.Combine(FileHelper.BasePath, ".downloads", Guid.NewGuid().ToString("N"));
+            string stagingMusic = Path.Combine(stagingRoot, "music");
+            string rollbackDirectory = Path.Combine(stagingRoot, ".rollback");
+            string bookDirectory = FileHelper.GetBookDirectory(cacheKey, item.Folder);
+            bool bookDirectoryExisted = Directory.Exists(bookDirectory);
+            bool committed = false;
+            try
             {
-                _dialogService.ShowMessage($"'{item.Title}' 본문 다운로드 실패: {jsonResult.Error?.UserMessage}");
-                return false;
-            }
+                Directory.CreateDirectory(stagingRoot);
+                string stagedJson = Path.Combine(stagingRoot, Path.GetFileName(item.TextFile));
+                ApiResult jsonResult = await _authService.DownloadFileAsync(
+                    FileUrl(username, item.Folder, item.TextFile), stagedJson, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!jsonResult.Success)
+                {
+                    _dialogService.ShowMessage($"'{item.Title}' 본문 다운로드 실패: {jsonResult.Error?.UserMessage}");
+                    return false;
+                }
 
-            string localCoverPath = FileHelper.GetLocalFilePath(Username, item.Folder, "", item.CoverFile);
-            string serverCoverUrl = FileUrl(Username, item.Folder, item.CoverFile);
-            ApiResult coverResult = await _authService.DownloadFileAsync(serverCoverUrl, localCoverPath);
-            if (!coverResult.Success)
+                var chapters = BookContent.ParseChapters(await File.ReadAllTextAsync(stagedJson, cancellationToken));
+                var commits = new List<(string StagedPath, string DestinationPath)>();
+                if (!string.IsNullOrWhiteSpace(item.CoverFile))
+                {
+                    string stagedCover = Path.Combine(stagingRoot, Path.GetFileName(item.CoverFile));
+                    ApiResult coverResult = await _authService.DownloadFileAsync(
+                        FileUrl(username, item.Folder, item.CoverFile), stagedCover, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!coverResult.Success)
+                    {
+                        _dialogService.ShowMessage($"'{item.Title}' 표지 다운로드 실패: {coverResult.Error?.UserMessage}");
+                        return false;
+                    }
+                    commits.Add((stagedCover, FileHelper.GetLocalFilePath(cacheKey, item.Folder, "", item.CoverFile)));
+                }
+
+                if (!await DownloadMusicFromList(username, item.Folder, stagingMusic, cancellationToken)) return false;
+                cancellationToken.ThrowIfCancellationRequested();
+                bool HasMusic(string path) => File.Exists(path) ||
+                    (Path.GetDirectoryName(path) == FileHelper.MusicBasePath &&
+                     File.Exists(Path.Combine(stagingMusic, Path.GetFileName(path))));
+                if (BookContent.MusicReferences(chapters).Any(reference =>
+                    BookContent.FindLocalMusic(cacheKey, item.Folder, reference, HasMusic) == null))
+                {
+                    _dialogService.ShowMessage($"'{item.Title}' 본문과 음악 파일이 일치하지 않습니다. 다시 다운로드해주세요.");
+                    return false;
+                }
+                if (Directory.Exists(stagingMusic))
+                {
+                    foreach (string stagedMusicFile in Directory.EnumerateFiles(stagingMusic))
+                    {
+                        commits.Add((stagedMusicFile,
+                            Path.Combine(FileHelper.MusicBasePath, Path.GetFileName(stagedMusicFile))));
+                    }
+                }
+                commits.Add((stagedJson, FileHelper.GetLocalFilePath(
+                    cacheKey, item.Folder, "", item.TextFile)));
+
+                cancellationToken.ThrowIfCancellationRequested();
+                CommitStagedFilesAtomically(commits, rollbackDirectory);
+                committed = true;
+                return true;
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return false; }
+            catch (JsonException error)
             {
-                _dialogService.ShowMessage($"'{item.Title}' 표지 다운로드 실패: {coverResult.Error?.UserMessage}");
+                _dialogService.ShowMessage($"'{item.Title}' 본문 형식 오류: {error.Message}");
                 return false;
             }
-            return await DownloadMusicFromList(Username, item.Folder);
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                _dialogService.ShowMessage($"'{item.Title}' 다운로드 파일 반영 실패: {error.Message}");
+                return false;
+            }
+            finally
+            {
+                try
+                {
+                    bool recoveryFilesRemain = !committed && Directory.Exists(rollbackDirectory)
+                        && Directory.EnumerateFiles(rollbackDirectory).Any();
+                    if (!recoveryFilesRemain && Directory.Exists(stagingRoot))
+                        Directory.Delete(stagingRoot, recursive: true);
+                    else if (recoveryFilesRemain)
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Download recovery files preserved] {rollbackDirectory}");
+                }
+                catch (Exception cleanupError)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Download staging cleanup] {cleanupError}");
+                }
+
+                if (!committed && !bookDirectoryExisted)
+                {
+                    try
+                    {
+                        if (Directory.Exists(bookDirectory) &&
+                            !Directory.EnumerateFileSystemEntries(bookDirectory).Any())
+                            Directory.Delete(bookDirectory);
+                    }
+                    catch (Exception cleanupError)
+                    {
+                        System.Diagnostics.Debug.WriteLine($"[Download book cleanup] {cleanupError}");
+                    }
+                }
+            }
+        }
+
+        internal static void CommitStagedFilesAtomically(
+            IReadOnlyList<(string StagedPath, string DestinationPath)> commits,
+            string rollbackDirectory)
+        {
+            var applied = new List<(string DestinationPath, string? BackupPath)>();
+            Directory.CreateDirectory(rollbackDirectory);
+
+            try
+            {
+                for (int index = 0; index < commits.Count; index++)
+                {
+                    (string stagedPath, string destinationPath) = commits[index];
+                    string? destinationDirectory = Path.GetDirectoryName(destinationPath);
+                    if (string.IsNullOrWhiteSpace(destinationDirectory))
+                        throw new IOException("다운로드 대상 폴더가 올바르지 않습니다.");
+                    if (!File.Exists(stagedPath))
+                        throw new FileNotFoundException("준비된 다운로드 파일을 찾을 수 없습니다.", stagedPath);
+
+                    Directory.CreateDirectory(destinationDirectory);
+                    string? backupPath = null;
+                    if (File.Exists(destinationPath))
+                    {
+                        backupPath = Path.Combine(rollbackDirectory, $"{index:D4}.bak");
+                        File.Move(destinationPath, backupPath);
+                    }
+                    // Record the backup before installing the new file. If that move fails,
+                    // the common rollback path must still restore this current destination.
+                    applied.Add((destinationPath, backupPath));
+                    File.Move(stagedPath, destinationPath);
+                }
+            }
+            catch (Exception commitError)
+            {
+                Exception? rollbackError = null;
+                for (int index = applied.Count - 1; index >= 0; index--)
+                {
+                    try
+                    {
+                        var entry = applied[index];
+                        if (File.Exists(entry.DestinationPath)) File.Delete(entry.DestinationPath);
+                        if (entry.BackupPath != null && File.Exists(entry.BackupPath))
+                            File.Move(entry.BackupPath, entry.DestinationPath);
+                    }
+                    catch (Exception error)
+                    {
+                        rollbackError ??= error;
+                    }
+                }
+
+                if (rollbackError != null)
+                    throw new IOException("다운로드 반영과 기존 파일 복구가 모두 실패했습니다.",
+                        new AggregateException(commitError, rollbackError));
+                throw;
+            }
         }
         private static string FileUrl(string username, string bookFolder, params string[] segments)
         {
@@ -439,9 +653,11 @@ namespace EBookStudio.ViewModels
             return $"{ApiConfig.BaseUrl}/files/{string.Join("/", encoded)}";
         }
 
-        private async Task<bool> DownloadMusicFromList(string username, string bookFolder)
+        private async Task<bool> DownloadMusicFromList(string username, string bookFolder,
+                                                       string stagingMusicFolder, CancellationToken cancellationToken)
         {
             ApiResult<List<string>> listResult = await _authService.GetMusicFileListAsync(username, bookFolder);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!listResult.Success)
             {
                 _dialogService.ShowMessage($"음악 목록 조회 실패: {listResult.Error?.UserMessage}");
@@ -450,19 +666,17 @@ namespace EBookStudio.ViewModels
             List<string> musicFiles = listResult.Value ?? new List<string>();
             if (musicFiles.Count == 0) return true;
 
-            string tempPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", "temp.wav");
-            string localMusicFolder = Path.GetDirectoryName(tempPath)!;
-
-            if (!_fileSystem.DirectoryExists(localMusicFolder))
-                _fileSystem.CreateDirectory(localMusicFolder);
+            Directory.CreateDirectory(stagingMusicFolder);
 
             foreach (var file in musicFiles)
             {
-                string localPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", file);
-                if (!_fileSystem.FileExists(localPath))
+                string finalPath = FileHelper.GetLocalFilePath(username, bookFolder, "music", file);
+                if (!_fileSystem.FileExists(finalPath))
                 {
+                    string localPath = Path.Combine(stagingMusicFolder, Path.GetFileName(finalPath));
                     string serverUrl = FileUrl(username, bookFolder, "music", file);
-                    ApiResult downloadResult = await _authService.DownloadFileAsync(serverUrl, localPath);
+                    ApiResult downloadResult = await _authService.DownloadFileAsync(serverUrl, localPath, cancellationToken);
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (!downloadResult.Success)
                     {
                         _dialogService.ShowMessage($"음악 다운로드 실패: {downloadResult.Error?.UserMessage}");

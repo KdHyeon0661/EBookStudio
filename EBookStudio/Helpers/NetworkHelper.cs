@@ -10,9 +10,6 @@ namespace EBookStudio.Helpers
             Timeout = TimeSpan.FromSeconds(2)
         };
 
-        public static bool CheckInternetConnection()
-            => CheckInternetConnectionAsync().GetAwaiter().GetResult();
-
         public static async Task<bool> CheckInternetConnectionAsync()
         {
             try

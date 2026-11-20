@@ -15,6 +15,13 @@ namespace EBookStudio.ViewModels
 
         private readonly MainViewModel _mainVM;
         private readonly ILibraryService _libraryService;
+        private readonly IBookFileSystem _fileSystem;
+        private long _loadVersion;
+        private bool _isLoadingLibrary;
+
+        private readonly record struct LibraryContext(string Username, string CacheKey, long Version);
+        private LibraryContext CurrentContext => new(_mainVM.LoggedInUser, _mainVM.LocalCacheKey, _loadVersion);
+        private bool IsCurrent(LibraryContext context) => CurrentContext == context;
         private readonly IDialogService _dialogService;
         private readonly IFilePickerService _filePickerService;
         private readonly SemaphoreSlim _saveLock = new(1, 1);
@@ -44,34 +51,34 @@ namespace EBookStudio.ViewModels
 
         public ICommand AddBookCommand { get; }
         public ICommand OpenBookCommand { get; }
-        public ICommand DeleteBookCommand { get; }
-        public ICommand CancelJobCommand { get; }
+        public ICommand BookActionCommand { get; }
 
         public LibraryViewModel(MainViewModel mainVM,
                                 ILibraryService? libraryService = null,
                                 IDialogService? dialogService = null,
-                                IFilePickerService? filePickerService = null)
+                                IFilePickerService? filePickerService = null,
+                                IBookFileSystem? fileSystem = null)
         {
             _mainVM = mainVM;
             _libraryService = libraryService ?? new LibraryService();
+            _fileSystem = fileSystem ?? new BookFileSystem();
             _dialogService = dialogService ?? new DialogService();
             _filePickerService = filePickerService ?? new FilePickerService();
 
             AddBookCommand = new AsyncRelayCommand(
-                async _ => await UploadProcess(), _ => _mainVM.IsNetworkAvailable);
+                async _ => await UploadProcess(), _ => !_isLoadingLibrary && _mainVM.IsNetworkAvailable);
             OpenBookCommand = new RelayCommand(parameter =>
             {
-                if (parameter is Book book && !book.IsAddButton && book.IsAvailable)
+                if (!_isLoadingLibrary && parameter is Book book && _allBooks.Contains(book) && book.IsAvailable)
                     _mainVM.NavigateToBookDetail(book);
             });
-            DeleteBookCommand = new AsyncRelayCommand(async parameter =>
+            BookActionCommand = new AsyncRelayCommand(async parameter =>
             {
-                if (parameter is Book book) await DeleteBook(book);
-            });
-            CancelJobCommand = new AsyncRelayCommand(async parameter =>
-            {
-                if (parameter is Book book) await CancelProcessing(book);
-            });
+                if (parameter is not Book book) return;
+                if (book.HasCancelableJob) await CancelProcessing(book);
+                else await DeleteBook(book);
+            }, parameter => !_isLoadingLibrary && parameter is Book book && _allBooks.Contains(book) &&
+                           (!book.HasCancelableJob || !book.IsCancellationRequested));
             RefreshList();
         }
 
@@ -84,64 +91,111 @@ namespace EBookStudio.ViewModels
             }
         }
 
+        internal void UpdateJobControls()
+        {
+            bool online = _mainVM.IsLoggedIn && _mainVM.IsNetworkAvailable;
+            if (!online) StopMonitoring();
+            LibraryContext context = CurrentContext;
+            foreach (Book book in _allBooks.ToList())
+            {
+                book.JobControlsAvailable = online;
+                if (online)
+                {
+                    StartJobMonitor(book, book.JobId, JobKind.Analysis, context);
+                    StartJobMonitor(book, book.MusicJobId, JobKind.Music, context);
+                }
+                else if (book.HasPendingJob && book.IsAvailable)
+                {
+                    book.StatusMessage = "음악 상태 확인 대기 · 온라인에서 갱신";
+                }
+            }
+            CommandManager.InvalidateRequerySuggested();
+        }
+
+        internal async Task ResetLocalLibraryAsync()
+        {
+            _loadVersion++;
+            LibraryContext context = CurrentContext;
+            _isLoadingLibrary = true;
+            StopMonitoring();
+            CommandManager.InvalidateRequerySuggested();
+            try
+            {
+                await _saveLock.WaitAsync();
+                try
+                {
+                    if (IsCurrent(context)) _fileSystem.ResetLocalLibrary(context.CacheKey);
+                }
+                finally { _saveLock.Release(); }
+            }
+            finally
+            {
+                if (IsCurrent(context)) await LoadLibrary();
+            }
+        }
+
         private async Task DeleteBook(Book book)
         {
-            if (!_dialogService.ShowConfirm($"'{book.Title}' 책을 삭제하시겠습니까?", "삭제 확인"))
+            LibraryContext context = CurrentContext;
+            if (!_dialogService.ShowConfirm($"이 PC에서 '{book.Title}' 책을 삭제하시겠습니까?", "삭제 확인"))
                 return;
-
-            await CancelRemoteJobsBestEffort(book);
+            if (!IsCurrent(context) || !_allBooks.Contains(book) || book.HasCancelableJob) return;
+            if (!DeleteLocalBookFiles(book, context.CacheKey)) return;
+            StopMonitor(book.JobId);
+            StopMonitor(book.MusicJobId);
             RemoveBookFromLibrary(book);
             await SaveLibrary();
-            await Task.Delay(100);
-            DeleteLocalBookFiles(book);
         }
 
         private async Task CancelProcessing(Book book)
         {
-            if (!book.HasPendingJob) return;
+            if (!book.HasCancelableJob || book.IsCancellationRequested) return;
+            if (!book.JobControlsAvailable)
+            {
+                _dialogService.ShowMessage("서버에 연결하고 로그인한 뒤 작업을 취소할 수 있습니다.");
+                return;
+            }
+            LibraryContext context = CurrentContext;
+            JobKind kind = string.IsNullOrWhiteSpace(book.JobId) ? JobKind.Music : JobKind.Analysis;
+            string jobId = kind == JobKind.Analysis ? book.JobId : book.MusicJobId;
             if (!_dialogService.ShowConfirm($"'{book.Title}'의 백그라운드 작업을 취소하시겠습니까?", "작업 취소"))
                 return;
-
-            string[] jobIds = new[] { book.JobId, book.MusicJobId }
-                .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct().ToArray();
-            foreach (string jobId in jobIds)
+            if (!StillOwnsJob()) return;
+            ApiResult<JobStatusResponse> result = await _libraryService.CancelJobAsync(jobId);
+            if (!StillOwnsJob()) return;
+            if (!result.Success)
             {
-                ApiResult<JobStatusResponse> result = await _libraryService.CancelJobAsync(jobId);
-                if (!result.Success && result.Error?.Kind != ApiErrorKind.NotFound)
+                if (result.Error?.Kind == ApiErrorKind.NotFound)
                 {
-                    _dialogService.ShowMessage($"작업 취소 실패: {result.Error?.UserMessage}");
-                    return;
+                    StopMonitor(jobId);
+                    await HandleCancelledJob(book, kind, context.CacheKey);
                 }
+                else _dialogService.ShowMessage($"작업 취소 실패: {result.Error?.UserMessage}");
+                return;
+            }
+            switch (result.Value?.status)
+            {
+                case "cancelled":
+                    StopMonitor(jobId);
+                    await HandleCancelledJob(book, kind, context.CacheKey);
+                    break;
+                case "cancel_requested":
+                    await MarkCancellationRequested(book);
+                    if (StillOwnsJob()) StartJobMonitor(book, jobId, kind, context);
+                    break;
+                case "done" or "error" or "skipped":
+                    // The worker finished before the cancellation arrived. Apply its actual result.
+                    if (kind == JobKind.Music && result.Value.status == "done")
+                        await MarkMusicDownloadPending(book);
+                    if (StillOwnsJob()) StartJobMonitor(book, jobId, kind, context);
+                    break;
+                default:
+                    _dialogService.ShowMessage("서버에서 작업 취소를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.");
+                    break;
             }
 
-            bool analysisWasPending = !string.IsNullOrWhiteSpace(book.JobId);
-            foreach (string jobId in jobIds) StopMonitor(jobId);
-            book.JobId = string.Empty;
-            book.MusicJobId = string.Empty;
-            book.IsBusy = false;
-            if (analysisWasPending)
-            {
-                RemoveBookFromLibrary(book);
-                DeleteLocalBookFiles(book);
-            }
-            else
-            {
-                book.StatusMessage = "AI 음악 생성 취소 · 기본 음악 사용";
-            }
-            await SaveLibrary();
-        }
-
-        private async Task CancelRemoteJobsBestEffort(Book book)
-        {
-            foreach (string jobId in new[] { book.JobId, book.MusicJobId }
-                         .Where(id => !string.IsNullOrWhiteSpace(id)).Distinct())
-            {
-                StopMonitor(jobId);
-                if (!_mainVM.IsLoggedIn || !_mainVM.IsNetworkAvailable) continue;
-                ApiResult<JobStatusResponse> result = await _libraryService.CancelJobAsync(jobId);
-                if (!result.Success)
-                    System.Diagnostics.Debug.WriteLine($"작업 취소 실패 {jobId}: {result.Error?.Message}");
-            }
+            bool StillOwnsJob() => IsCurrent(context) && _allBooks.Contains(book) &&
+                (kind == JobKind.Analysis ? book.JobId : book.MusicJobId) == jobId;
         }
 
         private void RemoveBookFromLibrary(Book book)
@@ -150,23 +204,30 @@ namespace EBookStudio.ViewModels
             RefreshList();
         }
 
-        private void DeleteLocalBookFiles(Book book)
+        private bool DeleteLocalBookFiles(Book book, string cacheKey)
         {
-            if (string.IsNullOrWhiteSpace(book.FolderId)) return;
-            string directory = FileHelper.GetBookDirectory(_mainVM.LoggedInUser, book.FolderId);
-            if (!Directory.Exists(directory)) return;
-            try { Directory.Delete(directory, recursive: true); }
-            catch (Exception error) { _dialogService.ShowMessage($"로컬 책 파일 삭제 실패: {error.Message}"); }
+            if (string.IsNullOrWhiteSpace(book.FolderId)) return true;
+            string directory = FileHelper.GetBookDirectory(cacheKey, book.FolderId);
+            try
+            {
+                if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+                return true;
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                _dialogService.ShowMessage($"로컬 책 파일 삭제 실패: {error.Message}");
+                return false;
+            }
         }
 
         private async Task SaveLibrary()
         {
+            LibraryContext context = CurrentContext;
             await _saveLock.WaitAsync();
             try
             {
-                string username = _mainVM.LoggedInUser;
-                if (string.IsNullOrEmpty(username)) return;
-                string path = FileHelper.GetLibraryFilePath(username);
+                if (!IsCurrent(context) || string.IsNullOrWhiteSpace(context.CacheKey)) return;
+                string path = FileHelper.GetLibraryFilePath(context.CacheKey);
                 string json = JsonSerializer.Serialize(_allBooks.Where(book => !book.IsAddButton).ToList(),
                     new JsonSerializerOptions { WriteIndented = true });
                 await AtomicFile.WriteAllTextAsync(path, json);
@@ -181,81 +242,66 @@ namespace EBookStudio.ViewModels
 
         public async Task LoadLibrary()
         {
+            _loadVersion++;
             StopMonitoring();
+            LibraryContext context = CurrentContext;
+            _allBooks.Clear();
+            _isLoadingLibrary = !string.IsNullOrWhiteSpace(context.CacheKey);
+            RefreshList();
+            CommandManager.InvalidateRequerySuggested();
+            if (!_isLoadingLibrary) return;
+
             try
             {
-                string username = _mainVM.LoggedInUser;
-                if (string.IsNullOrEmpty(username))
+                var loaded = new List<Book>();
+                try
                 {
-                    _allBooks.Clear();
-                    RefreshList();
-                    return;
-                }
-
-                string path = FileHelper.GetLibraryFilePath(username);
-                _allBooks.Clear();
-                if (File.Exists(path))
-                {
-                    string json = await File.ReadAllTextAsync(path);
-                    List<Book>? loadedBooks = JsonSerializer.Deserialize<List<Book>>(json);
-                    if (loadedBooks != null)
+                    string path = FileHelper.GetLibraryFilePath(context.CacheKey);
+                    if (_fileSystem.FileExists(path))
                     {
-                        foreach (Book book in loadedBooks)
-                        {
-                            if (!string.IsNullOrWhiteSpace(book.JobId))
-                            {
-                                book.IsBusy = true;
-                                book.IsAvailable = false;
-                                book.StatusMessage = "분석 작업 복구 대기...";
-                            }
-                            else if (book.IsBusy)
-                            {
-                                book.IsBusy = false;
-                                book.IsAvailable = false;
-                                book.StatusMessage = "이전 버전의 중단된 업로드";
-                            }
-
-                            if (!string.IsNullOrWhiteSpace(book.FolderId))
-                            {
-                                ReadingProgress? progress = ReadingProgressManager.GetProgress(username, book.FolderId);
-                                if (progress != null)
-                                {
-                                    book.LastPage = progress.CurrentPage;
-                                    book.TotalPageCount = progress.TotalPages;
-                                }
-                            }
-                        }
-                        _allBooks.AddRange(loadedBooks);
+                        string json = await _fileSystem.ReadAllTextAsync(path);
+                        if (!IsCurrent(context)) return;
+                        loaded = JsonSerializer.Deserialize<List<Book>>(json) ?? new();
                     }
                 }
+                catch (Exception error) when (error is IOException or UnauthorizedAccessException or JsonException)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Library load] {error}");
+                }
 
-                await ScanLocalFolders(username);
+                await Task.Run(() => LoadLocalBooks(context.CacheKey, loaded));
+                if (!IsCurrent(context)) return;
+
+                foreach (Book book in loaded)
+                {
+                    if (!_allBooks.Any(existing => existing.FolderId == book.FolderId &&
+                                             (!string.IsNullOrEmpty(book.FolderId) || existing.JobId == book.JobId)))
+                        _allBooks.Add(book);
+                }
                 RefreshList();
-                if (_mainVM.IsLoggedIn)
-                {
-                    foreach (Book book in _allBooks.ToList())
-                    {
-                        if (!string.IsNullOrWhiteSpace(book.JobId))
-                            StartJobMonitor(book, book.JobId, JobKind.Analysis, username);
-                        if (!string.IsNullOrWhiteSpace(book.MusicJobId))
-                            StartJobMonitor(book, book.MusicJobId, JobKind.Music, username);
-                    }
-                }
+                UpdateJobControls();
             }
             catch (Exception error)
             {
-                System.Diagnostics.Debug.WriteLine($"로드 실패: {error}");
-                _dialogService.ShowMessage("로컬 보관함 정보를 읽지 못했습니다. 책 폴더를 다시 검색합니다.");
-                await ScanLocalFolders(_mainVM.LoggedInUser);
-                RefreshList();
+                System.Diagnostics.Debug.WriteLine($"[Library scan] {error}");
+                if (IsCurrent(context))
+                    _dialogService.ShowMessage("로컬 보관함을 읽지 못했습니다. 파일 접근 권한을 확인해주세요.");
+            }
+            finally
+            {
+                if (IsCurrent(context))
+                {
+                    _isLoadingLibrary = false;
+                    CommandManager.InvalidateRequerySuggested();
+                }
             }
         }
 
-        public async Task ImportDownloadedBook(ServerBookItem item)
+        public async Task ImportDownloadedBook(ServerBookItem item, string cacheKey)
         {
-            string username = _mainVM.LoggedInUser;
-            if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(item.Folder)) return;
-            string localText = FileHelper.GetLocalFilePath(username, item.Folder, string.Empty, item.TextFile);
+            if (string.IsNullOrWhiteSpace(cacheKey) || cacheKey != _mainVM.LocalCacheKey ||
+                string.IsNullOrWhiteSpace(item.Folder)) return;
+            string localText = FileHelper.GetLocalFilePath(cacheKey, item.Folder, string.Empty, item.TextFile);
             if (!File.Exists(localText)) return;
 
             Book? book = _allBooks.FirstOrDefault(existing => existing.FolderId == item.Folder);
@@ -267,7 +313,7 @@ namespace EBookStudio.ViewModels
             book.Title = item.Title;
             book.Author = item.Author;
             book.FileName = item.TextFile;
-            string localCover = FileHelper.GetLocalFilePath(username, item.Folder, string.Empty, item.CoverFile);
+            string localCover = FileHelper.GetLocalFilePath(cacheKey, item.Folder, string.Empty, item.CoverFile);
             book.CoverUrl = File.Exists(localCover) ? localCover : string.Empty;
             book.IsBusy = false;
             book.IsAvailable = true;
@@ -276,41 +322,95 @@ namespace EBookStudio.ViewModels
             RefreshList();
         }
 
-        private async Task ScanLocalFolders(string username)
+        public async Task ResetReadingProgressAsync()
         {
-            await Task.Run(() =>
-            {
-                string userDirectory = FileHelper.GetUserDirectory(username);
-                if (!Directory.Exists(userDirectory)) return;
-                foreach (string directory in Directory.GetDirectories(userDirectory))
-                {
-                    var info = new DirectoryInfo(directory);
-                    string folderName = info.Name;
-                    string displayTitle = folderName;
-                    string[] parts = folderName.Split('_');
-                    if (parts.Length > 1 && parts[^1].Length >= 8)
-                        displayTitle = string.Join("_", parts.Take(parts.Length - 1));
-                    if (_allBooks.Any(book => book.FolderId == folderName)) continue;
+            ResetReadingProgress(_allBooks);
+            await SaveLibrary();
+            RefreshList();
+        }
 
-                    string jsonFile = Directory.GetFiles(directory, "*_full.json").FirstOrDefault() ?? string.Empty;
-                    if (string.IsNullOrWhiteSpace(jsonFile)) continue;
-                    var book = new Book
-                    {
-                        Title = displayTitle,
-                        FolderId = folderName,
-                        FileName = Path.GetFileName(jsonFile),
-                        IsAvailable = true,
-                        CreatedAt = info.CreationTime
-                    };
-                    string coverPath = Directory.GetFiles(directory, "*.png").FirstOrDefault() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(coverPath)) book.CoverUrl = coverPath;
-                    _allBooks.Add(book);
+        internal static void ResetReadingProgress(IEnumerable<Book> books)
+        {
+            foreach (Book book in books.Where(book => !book.IsAddButton))
+                book.LastPage = 0;
+        }
+
+        private static void LoadLocalBooks(string cacheKey, List<Book> books)
+        {
+            foreach (Book book in books)
+            {
+                if (!string.IsNullOrWhiteSpace(book.JobId) && !book.IsAvailable)
+                {
+                    book.IsBusy = true;
+                    book.IsAvailable = false;
+                    book.StatusMessage = "분석 작업 복구 대기...";
                 }
-            });
+                else if (book.IsBusy)
+                {
+                    book.IsBusy = false;
+                    book.IsAvailable = false;
+                    book.StatusMessage = "이전 버전의 중단된 업로드";
+                }
+
+                if (string.IsNullOrWhiteSpace(book.FolderId)) continue;
+                ApplyLocalProgress(book, cacheKey);
+                if (book.IsAvailable)
+                {
+                    string text = FileHelper.GetLocalFilePath(cacheKey, book.FolderId, "", book.FileName);
+                    if (!File.Exists(text))
+                    {
+                        string root = FileHelper.GetBookDirectory(cacheKey, book.FolderId);
+                        string? discovered = Directory.Exists(root) ? Directory.EnumerateFiles(root, "*_full.json").FirstOrDefault() : null;
+                        if (discovered != null) book.FileName = Path.GetFileName(discovered);
+                        else
+                        {
+                            book.IsAvailable = false;
+                            book.StatusMessage = "본문 파일이 없습니다 · 서버 보관함에서 다시 받아주세요.";
+                        }
+                    }
+                }
+                string? coverFile = Path.GetFileName(book.CoverUrl);
+                if (string.IsNullOrEmpty(coverFile)) continue;
+                string cover = FileHelper.GetLocalFilePath(cacheKey, book.FolderId, "", coverFile);
+                book.CoverUrl = File.Exists(cover) ? cover : string.Empty;
+            }
+
+            string userDirectory = FileHelper.GetUserDirectory(cacheKey);
+            if (!Directory.Exists(userDirectory)) return;
+            foreach (string directory in Directory.GetDirectories(userDirectory))
+            {
+                var info = new DirectoryInfo(directory);
+                string folderName = info.Name;
+                if (books.Any(book => book.FolderId == folderName)) continue;
+                string? jsonFile = Directory.GetFiles(directory, "*_full.json").FirstOrDefault();
+                if (jsonFile == null) continue;
+                string[] parts = folderName.Split('_');
+                var book = new Book
+                {
+                    Title = parts.Length > 1 && parts[^1].Length >= 8
+                        ? string.Join("_", parts.Take(parts.Length - 1)) : folderName,
+                    FolderId = folderName,
+                    FileName = Path.GetFileName(jsonFile),
+                    CoverUrl = Directory.GetFiles(directory, "*.png").FirstOrDefault() ?? string.Empty,
+                    IsAvailable = true,
+                    CreatedAt = info.CreationTime
+                };
+                ApplyLocalProgress(book, cacheKey);
+                books.Add(book);
+            }
+        }
+
+        private static void ApplyLocalProgress(Book book, string cacheKey)
+        {
+            ReadingProgress? progress = ReadingProgressManager.GetProgress(cacheKey, book.FolderId);
+            book.LastPage = progress?.CurrentPage ?? 0;
+            if (progress != null) book.TotalPageCount = progress.TotalPages;
         }
 
         private async Task UploadProcess()
         {
+            if (_isLoadingLibrary) return;
+            LibraryContext context = CurrentContext;
             if (!_mainVM.IsLoggedIn)
             {
                 _dialogService.ShowMessage("로그인이 필요합니다.");
@@ -319,16 +419,17 @@ namespace EBookStudio.ViewModels
             string? filePath = _filePickerService.PickPdfFile();
             if (string.IsNullOrEmpty(filePath) || !await CheckCopyrightAndDRM(filePath)) return;
 
-            string username = _mainVM.LoggedInUser;
+            if (!IsCurrent(context)) return;
             string requestId = Guid.NewGuid().ToString();
             var book = new Book
             {
                 Title = Path.GetFileNameWithoutExtension(filePath),
-                Author = username,
+                Author = context.Username,
                 CreatedAt = DateTime.Now,
                 CoverColor = "#DDDDDD",
                 JobId = requestId,
                 IsBusy = true,
+                JobControlsAvailable = true,
                 StatusMessage = "전송 중...",
                 LastPage = 0,
                 TotalPageCount = 0,
@@ -338,7 +439,9 @@ namespace EBookStudio.ViewModels
             RefreshList();
             await SaveLibrary();
 
-            UploadResult result = await _libraryService.UploadBookAsync(filePath, username, requestId);
+            if (!IsCurrent(context)) return;
+            UploadResult result = await _libraryService.UploadBookAsync(filePath, context.Username, requestId);
+            if (!IsCurrent(context)) return;
             if (!_allBooks.Contains(book))
             {
                 if (result.Success && !string.IsNullOrWhiteSpace(result.JobId))
@@ -351,7 +454,7 @@ namespace EBookStudio.ViewModels
                 {
                     book.StatusMessage = "업로드 접수 여부 확인 중...";
                     await SaveLibrary();
-                    StartJobMonitor(book, requestId, JobKind.Analysis, username);
+                    StartJobMonitor(book, requestId, JobKind.Analysis, context);
                     return;
                 }
                 RemoveBookFromLibrary(book);
@@ -369,26 +472,32 @@ namespace EBookStudio.ViewModels
             book.JobId = result.JobId;
             book.StatusMessage = "서버 분석 대기...";
             await SaveLibrary();
-            StartJobMonitor(book, book.JobId, JobKind.Analysis, username);
+            StartJobMonitor(book, book.JobId, JobKind.Analysis, context);
         }
 
-        private void StartJobMonitor(Book book, string jobId, JobKind kind, string username)
+        private void StartJobMonitor(Book book, string jobId, JobKind kind, LibraryContext context)
         {
-            if (string.IsNullOrWhiteSpace(jobId)) return;
+            if (string.IsNullOrWhiteSpace(jobId) || !IsCurrent(context)) return;
             var source = new CancellationTokenSource();
             if (!_jobMonitors.TryAdd(jobId, source))
             {
                 source.Dispose();
                 return;
             }
-            _ = MonitorJobAndReleaseAsync(book, jobId, kind, username, source);
+            _ = MonitorJobAndReleaseAsync(book, jobId, kind, context, source);
         }
 
         private async Task MonitorJobAndReleaseAsync(Book book, string jobId, JobKind kind,
-                                                     string username, CancellationTokenSource source)
+                                                     LibraryContext context, CancellationTokenSource source)
         {
-            try { await MonitorJobAsync(book, jobId, kind, username, source.Token); }
+            try { await MonitorJobAsync(book, jobId, kind, context, source.Token); }
             catch (OperationCanceledException) { }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Book job {jobId}] {error}");
+                if (IsCurrent(context) && !source.IsCancellationRequested)
+                    await UpdateStatusAsync(book, "파일을 처리하지 못했습니다. 저장 공간과 접근 권한을 확인해주세요.");
+            }
             finally
             {
                 ((ICollection<KeyValuePair<string, CancellationTokenSource>>)_jobMonitors)
@@ -398,13 +507,15 @@ namespace EBookStudio.ViewModels
         }
 
         private async Task MonitorJobAsync(Book book, string jobId, JobKind kind,
-                                           string username, CancellationToken cancellationToken)
+                                           LibraryContext context, CancellationToken cancellationToken)
         {
             int transientFailures = 0;
-            while (!cancellationToken.IsCancellationRequested)
+            int downloadFailures = 0;
+            while (IsCurrent(context) && !cancellationToken.IsCancellationRequested)
             {
                 ApiResult<JobStatusResponse> result = await _libraryService.GetJobStatusAsync(jobId);
                 cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrent(context)) return;
                 if (!result.Success)
                 {
                     bool submissionMayStillBeCompleting = kind == JobKind.Analysis &&
@@ -430,20 +541,22 @@ namespace EBookStudio.ViewModels
                 switch (status.status)
                 {
                     case "queued":
+                        if (book.IsCancellationRequested) break;
                         await UpdateStatusAsync(book, kind == JobKind.Analysis
                             ? $"분석 대기 중 · 시도 {status.attempt_count}/{status.max_attempts}"
                             : "AI 음악 생성 대기 중");
                         break;
                     case "running":
+                        if (book.IsCancellationRequested) break;
                         await UpdateStatusAsync(book, kind == JobKind.Analysis
                             ? $"책 분석 중 · 시도 {status.attempt_count}/{status.max_attempts}"
                             : "AI 음악 생성 중");
                         break;
                     case "cancel_requested":
-                        await UpdateStatusAsync(book, "작업 취소 처리 중...");
+                        await MarkCancellationRequested(book);
                         break;
                     case "cancelled":
-                        await HandleCancelledJob(book, kind);
+                        await HandleCancelledJob(book, kind, context.CacheKey);
                         return;
                     case "error":
                     case "skipped":
@@ -451,11 +564,11 @@ namespace EBookStudio.ViewModels
                         return;
                     case "done":
                         bool completed = kind == JobKind.Analysis
-                            ? await CompleteAnalysisAsync(book, status, username, cancellationToken)
-                            : await CompleteMusicAsync(book, username, cancellationToken);
+                            ? await CompleteAnalysisAsync(book, status, context, cancellationToken)
+                            : await CompleteMusicAsync(book, context, cancellationToken);
                         if (completed) return;
-                        transientFailures++;
-                        await Task.Delay(RetryDelay(transientFailures), cancellationToken);
+                        downloadFailures++;
+                        await Task.Delay(RetryDelay(downloadFailures), cancellationToken);
                         continue;
                 }
                 await Task.Delay(TimeSpan.FromSeconds(status.status == "queued" ? 2 : 4), cancellationToken);
@@ -463,7 +576,7 @@ namespace EBookStudio.ViewModels
         }
 
         private async Task<bool> CompleteAnalysisAsync(Book book, JobStatusResponse status,
-                                                       string username, CancellationToken cancellationToken)
+                                                       LibraryContext context, CancellationToken cancellationToken)
         {
             JobResultResponse? artifact = status.result;
             string folder = artifact?.book_folder ?? book.FolderId;
@@ -474,53 +587,77 @@ namespace EBookStudio.ViewModels
                 return true;
             }
 
-            await UpdateStatusAsync(book, "분석 완료 · 파일 다운로드 중...");
-            ApiResult textResult = await _libraryService.DownloadFileAsync(
-                FileUrl(username, folder, textFile),
-                FileHelper.GetLocalFilePath(username, folder, string.Empty, textFile));
-            cancellationToken.ThrowIfCancellationRequested();
-            if (!textResult.Success)
+            string staged = NewStagedBookPath();
+            try
             {
-                await UpdateStatusAsync(book, $"본문 다운로드 재시도 중 · {textResult.Error?.UserMessage}");
+                if (!book.IsAvailable) await UpdateStatusAsync(book, "분석 완료 · 본문 다운로드 중...");
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!IsCurrent(context)) return true;
+                ApiResult textResult = await _libraryService.DownloadFileAsync(
+                    FileUrl(context.Username, folder, textFile), staged, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!textResult.Success)
+                {
+                    await UpdateStatusAsync(book, $"본문 다운로드 재시도 중 · {textResult.Error?.UserMessage}");
+                    return false;
+                }
+
+                string contents = await File.ReadAllTextAsync(staged, cancellationToken);
+                List<LocalChapter> chapters = BookContent.ParseChapters(contents);
+                cancellationToken.ThrowIfCancellationRequested();
+                string destination = FileHelper.GetLocalFilePath(context.CacheKey, folder, "", textFile);
+                if (!File.Exists(destination))
+                {
+                    // Keep a readable first download when optional audio has to be retried.
+                    await AtomicFile.WriteAllTextAsync(destination, contents, cancellationToken);
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                book.FolderId = folder;
+                book.FileName = textFile;
+                book.Title = artifact?.book_title ?? book.Title;
+                if (!string.IsNullOrWhiteSpace(artifact?.author)) book.Author = artifact.author;
+                book.IsCancellationRequested = false;
+                book.IsBusy = false;
+                book.IsAvailable = true;
+                await UpdateStatusAsync(book, "본문 준비 완료 · 음악 다운로드 중...");
+                cancellationToken.ThrowIfCancellationRequested();
+                RefreshList();
+
+                string coverFile = artifact?.cover ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(coverFile))
+                {
+                    string localCover = FileHelper.GetLocalFilePath(context.CacheKey, folder, "", coverFile);
+                    if (File.Exists(localCover) || (await _libraryService.DownloadFileAsync(
+                        FileUrl(context.Username, folder, coverFile), localCover, cancellationToken)).Success)
+                        book.CoverUrl = localCover;
+                }
+                cancellationToken.ThrowIfCancellationRequested();
+                bool musicDownloaded = await DownloadAllMusicFiles(context.Username, folder, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!musicDownloaded || HasMissingMusic(chapters, context.CacheKey, folder))
+                {
+                    await UpdateStatusAsync(book, "본문 읽기 가능 · 음악 다운로드 재시도 중");
+                    return false;
+                }
+
+                File.Move(staged, destination, overwrite: true);
+                book.JobId = string.Empty;
+                book.MusicJobId = artifact?.music_job_id ?? string.Empty;
+                book.StatusMessage = book.HasPendingJob ? "기본 음악 준비 완료 · AI 음악 상태 확인 중" : "완료!";
+                await SaveLibrary();
+                RefreshList();
+                StartJobMonitor(book, book.MusicJobId, JobKind.Music, context);
+                return true;
+            }
+            catch (JsonException)
+            {
+                await UpdateStatusAsync(book, "서버 본문 형식 오류 · 다시 다운로드 중");
                 return false;
             }
-
-            bool coverDownloaded = false;
-            string coverFile = artifact?.cover ?? string.Empty;
-            string localCover = string.Empty;
-            if (!string.IsNullOrWhiteSpace(coverFile))
-            {
-                localCover = FileHelper.GetLocalFilePath(username, folder, string.Empty, coverFile);
-                ApiResult coverResult = await _libraryService.DownloadFileAsync(
-                    FileUrl(username, folder, coverFile), localCover);
-                coverDownloaded = coverResult.Success;
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            bool musicDownloaded = await DownloadAllMusicFiles(username, folder);
-            cancellationToken.ThrowIfCancellationRequested();
-
-            book.FolderId = folder;
-            book.FileName = textFile;
-            book.Title = artifact?.book_title ?? book.Title;
-            if (!string.IsNullOrWhiteSpace(artifact?.author)) book.Author = artifact.author;
-            book.CoverUrl = coverDownloaded ? localCover : string.Empty;
-            book.JobId = string.Empty;
-            book.MusicJobId = artifact?.music_job_id ?? string.Empty;
-            book.IsBusy = false;
-            book.IsAvailable = true;
-            book.StatusMessage = !string.IsNullOrWhiteSpace(book.MusicJobId)
-                ? "기본 음악 준비 완료 · AI 음악 생성 중"
-                : "완료!";
-            if (!coverDownloaded) book.StatusMessage += " · 표지 없음";
-            if (!musicDownloaded) book.StatusMessage += " · 음악 일부 재시도 필요";
-            await SaveLibrary();
-            RefreshList();
-            if (!string.IsNullOrWhiteSpace(book.MusicJobId))
-                StartJobMonitor(book, book.MusicJobId, JobKind.Music, username);
-            return true;
+            finally { CleanStagedBook(staged); }
         }
 
-        private async Task<bool> CompleteMusicAsync(Book book, string username,
+        private async Task<bool> CompleteMusicAsync(Book book, LibraryContext context,
                                                     CancellationToken cancellationToken)
         {
             if (string.IsNullOrWhiteSpace(book.FileName) || string.IsNullOrWhiteSpace(book.FolderId))
@@ -528,47 +665,103 @@ namespace EBookStudio.ViewModels
                 await HandleFailedJob(book, JobKind.Music, "로컬 책 정보가 없어 음악을 적용하지 못했습니다.");
                 return true;
             }
-            await UpdateStatusAsync(book, "AI 음악 생성 완료 · 다운로드 중...");
-            ApiResult jsonResult = await _libraryService.DownloadFileAsync(
-                FileUrl(username, book.FolderId, book.FileName),
-                FileHelper.GetLocalFilePath(username, book.FolderId, string.Empty, book.FileName));
+            await MarkMusicDownloadPending(book);
             cancellationToken.ThrowIfCancellationRequested();
-            if (!jsonResult.Success)
+            if (!IsCurrent(context)) return true;
+            ApiResult result = await DownloadMusicUpdateAsync(
+                context.Username, context.CacheKey, book, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!IsCurrent(context)) return true;
+            if (!result.Success)
             {
-                await UpdateStatusAsync(book, $"갱신된 본문 다운로드 재시도 중 · {jsonResult.Error?.UserMessage}");
+                await UpdateStatusAsync(book, $"AI 음악 업데이트 재시도 중 · {result.Error?.UserMessage}");
                 return false;
             }
-            if (!await DownloadAllMusicFiles(username, book.FolderId))
-            {
-                await UpdateStatusAsync(book, "AI 음악 파일 다운로드 재시도 중...");
-                return false;
-            }
-            cancellationToken.ThrowIfCancellationRequested();
             book.MusicJobId = string.Empty;
+            book.IsCancellationRequested = false;
+            book.IsMusicDownloadPending = false;
             book.StatusMessage = "AI 음악 적용 완료";
             await SaveLibrary();
             return true;
         }
 
-        private async Task HandleCancelledJob(Book book, JobKind kind)
+        internal async Task<ApiResult> DownloadMusicUpdateAsync(
+            string username, string cacheKey, Book book, CancellationToken cancellationToken)
         {
+            string destination = FileHelper.GetLocalFilePath(cacheKey, book.FolderId, "", book.FileName);
+            string staged = NewStagedBookPath();
+            try
+            {
+                ApiResult json = await _libraryService.DownloadFileAsync(
+                    FileUrl(username, book.FolderId, book.FileName), staged, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                if (!json.Success) return json;
+
+                List<LocalChapter> chapters = BookContent.ParseChapters(await File.ReadAllTextAsync(staged, cancellationToken));
+                if (!await DownloadAllMusicFiles(username, book.FolderId, cancellationToken))
+                    return ApiResult.Fail(new ApiError(ApiErrorKind.Network, "음악 파일을 모두 받지 못했습니다."));
+
+                if (HasMissingMusic(chapters, cacheKey, book.FolderId))
+                    return ApiResult.Fail(new ApiError(ApiErrorKind.InvalidResponse, "책이 참조하는 음악 파일이 없습니다."));
+
+                cancellationToken.ThrowIfCancellationRequested();
+                File.Move(staged, destination, overwrite: true);
+                return ApiResult.Ok();
+            }
+            catch (Exception error) when (error is JsonException or ArgumentException)
+            {
+                return ApiResult.Fail(new ApiError(ApiErrorKind.InvalidResponse, error.Message));
+            }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                return ApiResult.Fail(new ApiError(ApiErrorKind.LocalStorage, error.Message));
+            }
+            finally { CleanStagedBook(staged); }
+        }
+
+        private static bool HasMissingMusic(List<LocalChapter> chapters, string cacheKey, string folder)
+            => BookContent.MusicReferences(chapters)
+                .Any(reference => BookContent.FindLocalMusic(cacheKey, folder, reference, File.Exists) == null);
+
+        private static string NewStagedBookPath()
+        {
+            string directory = Path.Combine(FileHelper.BasePath, ".downloads");
+            Directory.CreateDirectory(directory);
+            return Path.Combine(directory, $"{Guid.NewGuid():N}.tmp");
+        }
+
+        private static void CleanStagedBook(string path)
+        {
+            try { File.Delete(path); }
+            catch (Exception error) when (error is IOException or UnauthorizedAccessException)
+            {
+                System.Diagnostics.Debug.WriteLine($"[Book staging cleanup] {error}");
+            }
+        }
+
+        private async Task HandleCancelledJob(Book book, JobKind kind, string cacheKey)
+        {
+            book.IsCancellationRequested = false;
             if (kind == JobKind.Analysis)
             {
                 book.JobId = string.Empty;
                 book.IsBusy = false;
-                RemoveBookFromLibrary(book);
-                DeleteLocalBookFiles(book);
+                if (DeleteLocalBookFiles(book, cacheKey)) RemoveBookFromLibrary(book);
+                else book.StatusMessage = "분석 취소됨 · 로컬 파일 삭제를 다시 시도해주세요.";
             }
             else
             {
                 book.MusicJobId = string.Empty;
-                book.StatusMessage = "AI 음악 생성 취소 · 기본 음악 사용";
+                book.IsMusicDownloadPending = false;
+                book.StatusMessage = "AI 음악 생성 취소 · 기존 음악 유지";
             }
+            CommandManager.InvalidateRequerySuggested();
             await SaveLibrary();
         }
 
         private async Task HandleFailedJob(Book book, JobKind kind, string? error)
         {
+            book.IsCancellationRequested = false;
             if (kind == JobKind.Analysis)
             {
                 book.JobId = string.Empty;
@@ -579,9 +772,26 @@ namespace EBookStudio.ViewModels
             else
             {
                 book.MusicJobId = string.Empty;
+                book.IsMusicDownloadPending = false;
                 book.StatusMessage = $"AI 음악 생성 실패 · 기본 음악 사용 · {error ?? "서버 작업 오류"}";
             }
             await SaveLibrary();
+        }
+
+        private Task MarkCancellationRequested(Book book)
+        {
+            book.IsCancellationRequested = true;
+            CommandManager.InvalidateRequerySuggested();
+            return UpdateStatusAsync(book, "작업 취소 처리 중...");
+        }
+
+        private Task MarkMusicDownloadPending(Book book)
+        {
+            book.IsCancellationRequested = false;
+            if (book.IsMusicDownloadPending) return Task.CompletedTask;
+            book.IsMusicDownloadPending = true;
+            CommandManager.InvalidateRequerySuggested();
+            return UpdateStatusAsync(book, "AI 음악 생성 완료 · 다운로드 중...");
         }
 
         private async Task HandleUnrecoverableStatusError(Book book, JobKind kind, ApiError? error)
@@ -654,16 +864,19 @@ namespace EBookStudio.ViewModels
             foreach (Book book in sorted) DisplayBooks.Add(book);
         }
 
-        private async Task<bool> DownloadAllMusicFiles(string username, string bookFolderId)
+        private async Task<bool> DownloadAllMusicFiles(string username, string bookFolderId,
+                                                          CancellationToken cancellationToken)
         {
             ApiResult<List<string>> listResult = await _libraryService.GetMusicFileListAsync(username, bookFolderId);
+            cancellationToken.ThrowIfCancellationRequested();
             if (!listResult.Success) return false;
             foreach (string file in listResult.Value ?? new List<string>())
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 string localPath = FileHelper.GetLocalFilePath(username, bookFolderId, "music", file);
                 if (File.Exists(localPath)) continue;
                 ApiResult downloadResult = await _libraryService.DownloadFileAsync(
-                    FileUrl(username, bookFolderId, "music", file), localPath);
+                    FileUrl(username, bookFolderId, "music", file), localPath, cancellationToken);
                 if (!downloadResult.Success) return false;
             }
             return true;
